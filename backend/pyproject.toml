@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdcloud-backend"
+version = "1.0.0"
+description = "AI-powered system dynamics modeling platform backend"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "sdCloud Team", email = "team@sdcloud.app"},
+]
+keywords = ["system-dynamics", "ai", "fastapi", "simulation", "pysd"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "sqlalchemy[asyncio]>=2.0.25",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "redis>=5.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.26.0",
+    "pysd>=3.13.0",
+    "networkx>=3.2.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "aiosqlite>=0.19.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+]
+
+[project.urls]
+Homepage = "https://sdcloud.app"
+Repository = "https://github.com/sdcloud/sdcloud"
+Documentation = "https://docs.sdcloud.app"
+
+[tool.setuptools]
+packages = ["app"]
+
+# ──────────────────────────────────────────────────────────────
+# Tool Configurations
+# ──────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = ["E501"]
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

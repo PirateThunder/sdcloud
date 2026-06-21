@@ -1,0 +1,186 @@
+% ============================================
+% Преамбула отчёта НИР
+% Проект: sdCloud — AI-ассистент для генерации
+% системно-динамических моделей
+% ============================================
+
+\documentclass[14pt,a4paper]{extreport}
+
+% ---------- Кодировка и шрифты ----------
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+
+% ---------- Язык ----------
+\usepackage[russian]{babel}
+
+% ---------- Геометрия страницы (ГОСТ) ----------
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=30mm,
+    right=15mm,
+    top=20mm,
+    bottom=20mm,
+    footskip=15mm,
+    headsep=10mm
+}
+
+% ---------- Интервалы ----------
+\usepackage{setspace}
+\onehalfspacing
+
+% ---------- Абзацный отступ ----------
+\usepackage{indentfirst}
+\setlength{\parindent}{1.25cm}
+
+% ---------- Математика ----------
+\usepackage{amsmath,amssymb,amsthm}
+
+% ---------- Графика ----------
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds, decorations.pathreplacing}
+
+% ---------- Таблицы ----------
+\usepackage{booktabs,longtable,multirow,array,colortbl}
+\usepackage{tabularx}
+\newcolumntype{L}[1]{>{\raggedright\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{C}[1]{>{\centering\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+
+% ---------- Листинги кода ----------
+\usepackage{listings}
+\usepackage{xcolor}
+
+% ---------- Гиперссылки ----------
+\usepackage[
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue,
+    bookmarks=true,
+    bookmarksopen=true,
+    pdftitle={sdCloud: AI-ассистент для генерации системно-динамических моделей},
+    pdfauthor={ИТМО}
+]{hyperref}
+
+% ---------- Колонтитулы ----------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancypagestyle{plain}{
+    \fancyhf{}
+    \fancyfoot[C]{\thepage}
+    \renewcommand{\headrulewidth}{0pt}
+    \renewcommand{\footrulewidth}{0pt}
+}
+
+% ---------- Заголовки ----------
+\usepackage{titlesec}
+\titleformat{\chapter}[display]
+    {\normalfont\Large\bfseries\centering}
+    {\chaptertitlename\ \thechapter}{14pt}{\Large}
+\titlespacing*{\chapter}{0pt}{-20pt}{20pt}
+
+\titleformat{\section}
+    {\normalfont\large\bfseries}
+    {\thesection}{1em}{}
+\titleformat{\subsection}
+    {\normalfont\normalsize\bfseries}
+    {\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+    {\normalfont\normalsize\itshape}
+    {\thesubsubsection}{1em}{}
+
+% ---------- Нумерация ----------
+\renewcommand{\thechapter}{\arabic{chapter}}
+\renewcommand{\thesection}{\thechapter.\arabic{section}}
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\thesubsection.\arabic{subsubsection}}
+
+% ---------- Названия элементов ----------
+\addto\captionsrussian{
+    \renewcommand{\contentsname}{СОДЕРЖАНИЕ}
+    \renewcommand{\chaptername}{ГЛАВА}
+    \renewcommand{\figurename}{Рис.}
+    \renewcommand{\tablename}{Таблица}
+    \renewcommand{\bibname}{СПИСОК ЛИТЕРАТУРЫ}
+    \renewcommand{\lstlistingname}{Листинг}
+}
+
+% ---------- Подписи к рисункам и таблицам ----------
+\usepackage{caption}
+\captionsetup[figure]{labelsep=endash, justification=centering, font=small}
+\captionsetup[table]{labelsep=endash, justification=justified, font=small, singlelinecheck=false}
+\captionsetup[lstlisting]{labelsep=endash, font=small}
+
+% ---------- Стили листингов ----------
+\lstset{
+    basicstyle=\small\ttfamily,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{gray}\itshape,
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=8pt,
+    frame=single,
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=4,
+    showstringspaces=false,
+    inputencoding=utf8,
+    extendedchars=true,
+    literate=
+        {а}{\cyra}1 {б}{\cyrb}1 {в}{\cyrv}1 {г}{\cyrg}1 {д}{\cyrd}1
+        {е}{\cyre}1 {ё}{\cyryo}1 {ж}{\cyrzh}1 {з}{\cyrz}1 {и}{\cyri}1
+        {й}{\cyrishrt}1 {к}{\cyrk}1 {л}{\cyrl}1 {м}{\cyrm}1 {н}{\cyrn}1
+        {о}{\cyro}1 {п}{\cyrp}1 {р}{\cyrr}1 {с}{\cyrs}1 {т}{\cyrt}1
+        {у}{\cyru}1 {ф}{\cyrf}1 {х}{\cyrh}1 {ц}{\cyrc}1 {ч}{\cyrch}1
+        {ш}{\cyrsh}1 {щ}{\cyrshch}1 {ъ}{\cyrhrdsn}1 {ы}{\cyry}1 {ь}{\cyrsoftsign}1
+        {э}{\cyrie}1 {ю}{\cyryu}1 {я}{\cyrya}1
+        {А}{\CYRA}1 {Б}{\CYRB}1 {В}{\CYRV}1 {Г}{\CYRG}1 {Д}{\CYRD}1
+        {Е}{\CYRE}1 {Ё}{\CYRYO}1 {Ж}{\CYRZH}1 {З}{\CYRZ}1 {И}{\CYRI}1
+        {Й}{\CYRISHRT}1 {К}{\CYRK}1 {Л}{\CYRL}1 {М}{\CYRM}1 {Н}{\CYRN}1
+        {О}{\CYRO}1 {П}{\CYRP}1 {Р}{\CYRR}1 {С}{\CYRS}1 {Т}{\CYRT}1
+        {У}{\CYRU}1 {Ф}{\CYRF}1 {Х}{\CYRH}1 {Ц}{\CYRC}1 {Ч}{\CYRCH}1
+        {Ш}{\CYRSH}1 {Щ}{\CYRSHCH}1 {Ъ}{\CYRHRDSN}1 {Ы}{\CYRY}1 {Ь}{\CYRSOFTSIGN}1
+        {Э}{\CYRIE}1 {Ю}{\CYRYU}1 {Я}{\CYRYA}1
+}
+
+% ---------- Окружения ----------
+\newtheorem{definition}{Определение}[chapter]
+\newtheorem{theorem}{Теорема}[chapter]
+
+% ---------- Пакеты для алгоритмов ----------
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\floatname{algorithm}{Алгоритм}
+
+% ---------- Дополнительные пакеты ----------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5cm,itemsep=2pt}
+\setlist[enumerate]{leftmargin=1.5cm,itemsep=2pt}
+\usepackage{float}
+\usepackage{csquotes}
+\usepackage{url}
+\usepackage{breakurl}
+\usepackage{footnote}
+\usepackage{microtype}
+\usepackage{etoolbox}
+
+% ---------- Счётчики ----------
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}
+
+% ---------- Компактные списки ----------
+\let\olditemize\itemize
+\let\oldenumerate\enumerate
+\renewenvironment{itemize}{
+    \olditemize[topsep=4pt,parsep=2pt]
+}{\endolditemize}
+\renewenvironment{enumerate}{
+    \oldenumerate[topsep=4pt,parsep=2pt]
+}{\endoldenumerate}

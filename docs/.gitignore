@@ -1,0 +1,35 @@
+# ============================================
+# Docs .gitignore (LaTeX)
+# ============================================
+
+# Compiled output
+*.pdf
+*.dvi
+*.ps
+
+# Auxiliary files
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.lol
+*.nav
+*.snm
+*.vrb
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.xdv
+
+# Generated fonts / metrics
+*.tfm
+*.600gf
+*.pk
+
+# Editor
+*.swp
+*~

@@ -1,0 +1,46 @@
+# ============================================
+# Root .gitignore for sdCloud
+# ============================================
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+*.key
+*.pem
+*.crt
+*.secret
+secrets/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+logs/
+log/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# Docker
+.dockerignore
+
+# Project-specific notes / drafts
+kimi-agent-plans.md

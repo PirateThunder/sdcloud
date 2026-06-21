@@ -1,0 +1,52 @@
+# ============================================
+# Backend .gitignore (Python / FastAPI)
+# ============================================
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+.env/
+.venv/
+env/
+ENV/
+
+# Dependency managers
+poetry.lock
+Pipfile.lock
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# SQLite (if used for local dev)
+*.sqlite3
+*.db
+
+# Uploaded / generated files
+uploads/
+media/
+
+# Local env
+.env
+.env.local
+!.env.example

@@ -1,0 +1,691 @@
+% ============================================
+% Глава 3. Реализация и результаты
+% ============================================
+
+\chapter{РЕАЛИЗАЦИЯ И РЕЗУЛЬТАТЫ}
+
+\section{Структура проекта}
+
+\subsection{Организация кодовой базы}
+
+Проект \texttt{sdCloud} организован в виде монорепозитория с разделением на backend и frontend части. Корневая структура проекта представлена на листинге~\ref{lst:project-tree}.
+
+\begin{lstlisting}[caption={Структура директорий проекта sdCloud (актуальная версия)}, label={lst:project-tree}, language={}, basicstyle=\ttfamily\scriptsize]
+sdcloud/
+|-- backend/
+|   |-- app/
+|   |   |-- main.py              # Точка входа FastAPI
+|   |   |-- api/
+|   |   |   |-- v1/
+|   |   |   |   |-- router.py    # Сборка маршрутов API v1
+|   |   |   |   |-- endpoints/
+|   |   |   |   |   |-- auth.py        # JWT-аутентификация
+|   |   |   |   |   |-- conversations.py # CRUD диалогов
+|   |   |   |   |   |-- generate.py    # Запуск генерации
+|   |   |   |   |   |-- guest.py       # Гостевые эндпоинты
+|   |   |   |   |   |-- health.py      # Health check
+|   |   |   |   |   |-- models.py      # CRUD сгенерированных моделей
+|   |   |   |   |   |-- simulate.py    # Эндпоинты симуляции
+|   |   |-- core/
+|   |   |   |-- config.py        # Pydantic Settings
+|   |   |   |-- dependencies.py  # Зависимости FastAPI
+|   |   |   |-- security.py      # JWT, bcrypt
+|   |   |   |-- exceptions.py    # Кастомные исключения
+|   |   |-- models/
+|   |   |   |-- user.py          # Модель пользователя
+|   |   |   |-- conversation.py  # Модель диалога
+|   |   |   |-- message.py       # Модель сообщения
+|   |   |   |-- generated_model.py # Модель SD-модели
+|   |   |   |-- simulation.py    # Модель результата симуляции
+|   |   |-- schemas/             # Pydantic-схемы запросов/ответов
+|   |   |-- services/
+|   |   |   |-- generation/
+|   |   |   |   |-- pipeline.py        # Многоэтапный конвейер
+|   |   |   |   |-- python_generator.py # Детерминированный генератор
+|   |   |   |   |-- vensim_export.py   # Экспорт в .mdl
+|   |   |   |-- graph/
+|   |   |   |   |-- cld_builder.py     # Построение CLD
+|   |   |   |   |-- sfd_builder.py     # Построение SFD
+|   |   |   |   |-- validator.py       # Валидация графов
+|   |   |   |-- llm/
+|   |   |   |   |-- universal_ai.py    # LiteLLM + OpenAI SDK клиент
+|   |   |   |   |-- openrouter.py      # Async-обертка
+|   |   |   |-- simulation/
+|   |   |   |   |-- pysd_runner.py     # Симуляция через PySD
+|   |   |   |   |-- scipy_runner.py    # Fallback на SciPy solve_ivp
+|   |   |-- utils/
+|   |   |   |-- sd_prompts.py          # Шаблоны промптов
+|   |   |   |-- model_postprocess.py   # Постпроцессинг уравнений
+|   |   |-- workers/
+|   |   |   |-- tasks.py               # Фоновые asyncio-задачи
+|   |   |-- alembic/             # Миграции базы данных
+|   |   |-- tests/               # Pytest-тесты
+|   |-- pyproject.toml           # Зависимости (setuptools)
+|   |-- Dockerfile
+|   |-- requirements.txt         # Фиксированные зависимости
+|
+|-- frontend/
+|   |-- src/
+|   |   |-- app/                 # Next.js App Router: страницы
+|   |   |-- widgets/             # Самостоятельные UI-блоки
+|   |   |   |-- chat-layout/
+|   |   |   |-- header/
+|   |   |   |-- sidebar/
+|   |   |-- features/            # Фичи: auth, chat-send, model-view,
+|   |   |   |                    # simulation-run
+|   |   |-- entities/            # Сущности: user, chat, model,
+|   |   |   |                    # simulation, guest
+|   |   |-- shared/              # API-клиент, UI-компоненты, конфиг
+|   |-- package.json             # Зависимости (Bun)
+|   |-- next.config.js
+|   |-- tailwind.config.ts
+|   |-- tsconfig.json
+|
+|-- docker-compose.yaml          # Общая оркестрация
+|-- README.md
+|-- .env.example
+\end{lstlisting}
+
+\subsection{Управление зависимостями}
+
+Backend-проект использует стандартный \texttt{pip} с файлом \texttt{requirements.txt} (детерминированная установка в Docker) и \texttt{pyproject.toml} для метаданных проекта. В процессе развёртывания была выявлена и устранена проблема долгого разрешения зависимостей \texttt{litellm} путём фиксации версии \texttt{litellm==1.40.0}. Основные зависимости backend представлены в таблице~\ref{tab:backend-deps}.
+
+\begin{table}[H]
+    \centering
+    \caption{Основные зависимости backend}
+    \label{tab:backend-deps}
+    \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Пакет} & \textbf{Версия} & \textbf{Назначение} \\
+        \hline
+        fastapi & $\geq 0.110$ & Веб-фреймворк \\
+        \hline
+        uvicorn & $\geq 0.27$ & ASGI-сервер \\
+        \hline
+        sqlalchemy & $\geq 2.0$ & ORM \\
+        \hline
+        alembic & $\geq 1.13$ & Миграции БД \\
+        \hline
+        asyncpg & $\geq 0.29$ & Асинхронный драйвер PostgreSQL \\
+        \hline
+        redis & $\geq 5.0$ & Клиент Redis \\
+        \hline
+        taskiq & $\geq 0.11$ & Очередь задач \\
+        \hline
+        httpx & $\geq 0.27$ & Асинхронный HTTP-клиент \\
+        \hline
+        pydantic & $\geq 2.6$ & Валидация данных \\
+        \hline
+        pydantic-settings & $\geq 2.1$ & Управление конфигурацией \\
+        \hline
+        networkx & $\geq 3.2$ & Анализ графов \\
+        \hline
+        pysd & $\geq 3.13$ & Симуляция SD-моделей (попытка загрузки) \\
+        \hline
+        scipy & $\geq 1.11$ & Численное интегрирование fallback \\
+        \hline
+        litellm & $1.40.0$ & Унифицированный клиент LLM \\
+        \hline
+        openai & $\geq 1.0$ & OpenAI SDK для OpenRouter \\
+        \hline
+        pytest & $\geq 8.0$ & Фреймворк тестирования \\
+        \hline
+        pytest-asyncio & $\geq 0.23$ & Тестирование async-кода \\
+        \hline
+    \end{tabular}
+\end{table}
+
+
+\section{API эндпоинты}
+
+\subsection{Структура REST API}
+
+API платформы спроектировано в соответствии с принципами REST и использует формат JSON для обмена данными. Базовый путь API: \texttt{/api/v1/}. Основные эндпоинты системы представлены в таблице~\ref{tab:api-endpoints}.
+
+\begin{table}[H]
+    \centering
+    \caption{Основные эндпоинты REST API}
+    \label{tab:api-endpoints}
+    \begin{tabular}{|p{4.5cm}|p{1.8cm}|p{7.5cm}|}
+        \hline
+        \textbf{Эндпоинт} & \textbf{Метод} & \textbf{Описание} \\
+        \hline
+        \texttt{/api/v1/health} & GET & Проверка состояния сервиса \\
+        \hline
+        \texttt{/api/v1/sessions} & GET & Получение списка сессий пользователя \\
+        \hline
+        \texttt{/api/v1/sessions} & POST & Создание новой сессии моделирования \\
+        \hline
+        \texttt{/api/v1/sessions/\{id\}} & GET & Получение сессии по идентификатору \\
+        \hline
+        \texttt{/api/v1/sessions/\{id\}} & DELETE & Удаление сессии \\
+        \hline
+        \texttt{/api/v1/sessions/\{id\}/messages} & GET & Получение сообщений сессии \\
+        \hline
+        \texttt{/api/v1/sessions/\{id\}/messages} & POST & Отправка сообщения (запуск генерации) \\
+        \hline
+        \texttt{/api/v1/models/\{id\}} & GET & Получение сгенерированной модели \\
+        \hline
+        \texttt{/api/v1/models/\{id\}/cld} & GET & Получение CLD модели \\
+        \hline
+        \texttt{/api/v1/models/\{id\}/sfd} & GET & Получение SFD модели \\
+        \hline
+        \texttt{/api/v1/models/\{id\}/mdl} & GET & Получение кода модели в формате MDL \\
+        \hline
+        \texttt{/api/v1/models/\{id\}/simulate} & POST & Запуск симуляции модели \\
+        \hline
+        \texttt{/api/v1/models/\{id\}/results} & GET & Получение результатов симуляции \\
+        \hline
+        \texttt{/api/v1/validate/cld} & POST & Валидация CLD \\
+        \hline
+        \texttt{/api/v1/validate/sfd} & POST & Валидация SFD \\
+        \hline
+        \texttt{/api/v1/guest/chat} & POST & Гостевое сообщение + генерация модели \\
+        \hline
+        \texttt{/api/v1/guest/simulate} & POST & Гостевая симуляция \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Примеры запросов и ответов}
+
+\textbf{Создание сессии моделирования:}
+
+\begin{lstlisting}[caption={Запрос на создание сессии}, language={}]
+POST /api/v1/sessions
+Content-Type: application/json
+
+{
+  "title": "Модель предприятия",
+  "description": "Модель роста и падения производства"
+}
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Ответ при создании сессии}, language={}]
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "title": "Модель предприятия",
+  "description": "Модель роста и падения производства",
+  "created_at": "2025-03-15T10:30:00Z",
+  "updated_at": "2025-03-15T10:30:00Z",
+  "status": "active"
+}
+\end{lstlisting}
+
+\textbf{Отправка сообщения и запуск генерации:}
+
+\begin{lstlisting}[caption={Запрос на генерацию модели}, language={}]
+POST /api/v1/sessions/a1b2c3d4-e5f6-7890-abcd-ef1234567890/messages
+Content-Type: application/json
+
+{
+  "content": "Предприятие нанимает сотрудников для увеличения
+              производительности. Рост производительности
+              приводит к увеличению выручки. Выручка определяет
+              бюджет на найм. Рост числа сотрудников замедляется
+              из-за ограниченности офисных помещений.",
+  "generate_model": true
+}
+\end{lstlisting}
+
+\begin{lstlisting}[caption={Ответ при запуске генерации}, language={}]
+{
+  "message_id": "msg-12345",
+  "task_id": "task-67890",
+  "status": "queued",
+  "estimated_time": "30-60 seconds"
+}
+\end{lstlisting}
+
+
+\section{Модели данных}
+
+\subsection{Схема базы данных}
+
+Реляционная схема базы данных PostgreSQL включает следующие основные таблицы (рис.~\ref{fig:er-diagram}):
+
+\begin{figure}[H]
+    \centering
+    \begin{tikzpicture}[
+        entity/.style={draw, rectangle, minimum width=3.5cm, minimum height=0.8cm, align=center, font=\small},
+        relation/.style={draw, diamond, aspect=2, align=center, font=\small},
+        arrow/.style={-Stealth, thick}
+    ]
+        \node[entity, fill=blue!10] (user) {\textbf{users}\\id, email, name, ...};
+        \node[entity, fill=blue!10, right=3cm of user] (session) {\textbf{sessions}\\id, title, status, ...};
+        \node[entity, fill=blue!10, right=3cm of session] (message) {\textbf{messages}\\id, content, role, ...};
+        \node[entity, fill=green!10, below=2cm of session] (model) {\textbf{sd\_models}\\id, clod\_json, sfd\_json, ...};
+        \node[entity, fill=green!10, below=2cm of message] (sim) {\textbf{simulations}\\id, results, params, ...};
+
+        \draw[arrow] (user) -- (session) node[midway, above, font=\scriptsize] {1:N};
+        \draw[arrow] (session) -- (message) node[midway, above, font=\scriptsize] {1:N};
+        \draw[arrow] (message) -- (model) node[midway, left, font=\scriptsize] {1:1};
+        \draw[arrow] (model) -- (sim) node[midway, above, font=\scriptsize] {1:N};
+    \end{tikzpicture}
+    \caption{ER-диаграмма базы данных sdCloud}
+    \label{fig:er-diagram}
+\end{figure}
+
+\subsection{Описание таблиц}
+
+\textbf{Таблица \texttt{users}} хранит информацию о пользователях платформы:
+
+\begin{table}[H]
+    \centering
+    \caption{Структура таблицы \texttt{users}}
+    \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Поле} & \textbf{Тип} & \textbf{Описание} \\
+        \hline
+        id & UUID (PK) & Уникальный идентификатор \\
+        \hline
+        email & VARCHAR(255) & Email пользователя (уникальный) \\
+        \hline
+        hashed\_password & VARCHAR(255) & Хеш пароля (bcrypt) \\
+        \hline
+        full\_name & VARCHAR(255) & Полное имя \\
+        \hline
+        is\_active & BOOLEAN & Флаг активности \\
+        \hline
+        created\_at & TIMESTAMP & Время создания \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\textbf{Таблица \texttt{sessions}} представляет сессии моделирования:
+
+\begin{table}[H]
+    \centering
+    \caption{Структура таблицы \texttt{sessions}}
+    \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Поле} & \textbf{Тип} & \textbf{Описание} \\
+        \hline
+        id & UUID (PK) & Уникальный идентификатор \\
+        \hline
+        user\_id & UUID (FK) & Ссылка на пользователя \\
+        \hline
+        title & VARCHAR(255) & Название сессии \\
+        \hline
+        description & TEXT & Описание \\
+        \hline
+        status & VARCHAR(50) & Статус (active, archived) \\
+        \hline
+        created\_at & TIMESTAMP & Время создания \\
+        \hline
+        updated\_at & TIMESTAMP & Время обновления \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\textbf{Таблица \texttt{messages}} хранит сообщения в рамках сессий:
+
+\begin{table}[H]
+    \centering
+    \caption{Структура таблицы \texttt{messages}}
+    \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Поле} & \textbf{Тип} & \textbf{Описание} \\
+        \hline
+        id & UUID (PK) & Уникальный идентификатор \\
+        \hline
+        session\_id & UUID (FK) & Ссылка на сессию \\
+        \hline
+        role & VARCHAR(20) & Роль (user, assistant, system) \\
+        \hline
+        content & TEXT & Содержание сообщения \\
+        \hline
+        model\_id & UUID (FK, nullable) & Ссылка на сгенерированную модель \\
+        \hline
+        task\_id & VARCHAR(100) & Идентификатор задачи Taskiq \\
+        \hline
+        created\_at & TIMESTAMP & Время создания \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\textbf{Таблица \texttt{sd\_models}} хранит сгенерированные системно-динамические модели:
+
+\begin{table}[H]
+    \centering
+    \caption{Структура таблицы \texttt{sd\_models}}
+    \begin{tabular}{|l|l|l|}
+        \hline
+        \textbf{Поле} & \textbf{Тип} & \textbf{Описание} \\
+        \hline
+        id & UUID (PK) & Уникальный идентификатор \\
+        \hline
+        message\_id & UUID (FK) & Ссылка на сообщение \\
+        \hline
+        clod\_json & JSONB & CLD в формате JSON \\
+        \hline
+        sfd\_json & JSONB & SFD в формате JSON \\
+        \hline
+        mdl\_code & TEXT & Код модели в формате MDL \\
+        \hline
+        validation\_result & JSONB & Результат валидации \\
+        \hline
+        status & VARCHAR(50) & Статус (pending, valid, invalid) \\
+        \hline
+        created\_at & TIMESTAMP & Время создания \\
+        \hline
+    \end{tabular}
+\end{table}
+
+Использование типа \texttt{JSONB} для хранения структурированных данных (CLD, SFD, результаты валидации) обеспечивает гибкость схемы при сохранении возможности индексации и эффективного запроса вложенных полей.
+
+
+\section{Детерминированный генератор Python-кода}
+
+Ключевым элементом надёжности текущей версии является детерминированный генератор \texttt{python\_generator.py}. Он преобразует структурированные уравнения, полученные от LLM, в исполняемый Python-код, не прибегая повторно к языковой модели.
+
+\subsection{Принцип работы}
+
+Генератор выполняет следующие операции:
+
+\begin{enumerate}
+    \item Собирает множество имён переменных модели.
+    \item Для каждого уравнения парсит правую часть с помощью \texttt{ast.parse}.
+    \item Преобразует bare-ссылки на переменные в вызовы функций от \texttt{time}: \texttt{Population} становится \texttt{Population(time)}.
+    \item Нормализует Vensim-функции \texttt{MAX}, \texttt{MIN}, \texttt{ABS} к Python-встроенным.
+    \item Формирует модуль с импортами \texttt{numpy} и \texttt{integ} из PySD.
+\end{enumerate}
+
+\begin{lstlisting}[caption={Детерминированная генерация Python-кода (упрощённо)}, language=Python, basicstyle=\ttfamily\scriptsize]
+def generate_python_code(variables, equations):
+    variable_names = {v["name"] for v in variables}
+    transformer = _build_call_transformer(variable_names)
+    lines = ["import numpy as np",
+             "from pysd.py_backend.functions import integ"]
+
+    for eq in equations:
+        lhs = eq.get("lhs", "")
+        rhs = str(eq.get("rhs", "")).strip()
+        rhs_tree = ast.parse(rhs, mode="eval")
+        rhs_tree = transformer.visit(rhs_tree)
+        transformed_rhs = ast.unparse(rhs_tree.body)
+        lines.append(f"\ndef {lhs}(time):")
+        lines.append(f"    return {transformed_rhs}")
+
+    return "\n".join(lines)
+\end{lstlisting}
+
+Преимущество этого подхода --- воспроизводимость и отсутствие типичных для LLM ошибок: неправильных импортов, ссылок на несуществующие переменные, пропущенных скобок.
+
+
+\section{Постпроцессинг уравнений}
+
+LLM часто генерируют нулевые или пустые значения для констант и начальные значения уровней, равные нулю, что приводит к вырожденным симуляциям. Модуль \texttt{model\_postprocess.py} автоматически исправляет такие случаи эвристически подобранными defaults.
+
+\begin{lstlisting}[caption={Постпроцессинг уравнений (упрощённо)}, language=Python, basicstyle=\ttfamily\scriptsize]
+def post_process_equations(variables, equations):
+    patched = []
+    for eq in equations:
+        eq = dict(eq)
+        vtype = eq.get("variable_type", "").lower()
+        if vtype == "constant":
+            eq = _patch_constant_equation(eq, variables)
+        elif vtype == "stock":
+            eq = _patch_stock_equation(eq, variables)
+        patched.append(eq)
+    return patched
+\end{lstlisting}
+
+Для констант применяются name-based эвристики: коэффициенты получают 0.05, ставки роста --- 0.02, ёмкости --- 1000.0. Для уровней начальное значение берётся из переменной, если оно ненулевое, иначе устанавливается 100.0.
+
+
+\section{Fallback-симуляция через SciPy}
+
+При попытке загрузки сгенерированного кода в PySD 3.14.x возникает ошибка импорта \texttt{integ}. Для сохранения работоспособности разработан fallback на \texttt{scipy.integrate.solve\_ivp}.
+
+\subsection{Алгоритм работы}
+
+\begin{enumerate}
+    \item Парсинг Python-кода через \texttt{ast}; выделение функций-уровней по вызову \texttt{integ(поток, начальное\_значение)}.
+    \item Построение функции \texttt{derivatives(t, state)}, которая обновляет shared-состояние, вычисляет алгебраические переменные и возвращает чистые потоки для каждого уровня.
+    \item Формирование начального состояния \texttt{initial\_state()}.
+    \item Интегрирование системы ОДУ методом RK45 (или LSODA, BDF, DOP853) на равномерной сетке времени.
+\end{enumerate}
+
+\begin{lstlisting}[caption={Запуск симуляции через SciPy fallback}, language=Python, basicstyle=\ttfamily\scriptsize]
+def run_simulation(python_code, params=None,
+                   time_start=0.0, time_end=100.0,
+                   time_step=0.25, integration_method="rk45"):
+    namespace, stock_names, initial_values = \
+        _build_simulation_module(python_code)
+
+    # Переопределение параметров
+    for param_name, param_value in (params or {}).items():
+        if param_name in stock_names:
+            # начальные значения уровней
+            ...
+        elif param_name in namespace:
+            namespace[param_name] = lambda t, v=param_value: v
+
+    derivatives_fn = namespace["derivatives"]
+    initial_state = np.array(namespace["initial_state"](), dtype=float)
+
+    n_steps = int((time_end - time_start) / time_step) + 1
+    t_eval = np.linspace(time_start, time_end, n_steps)
+
+    sol = solve_ivp(derivatives_fn,
+                    [time_start, time_end],
+                    initial_state,
+                    method=method_map[integration_method],
+                    t_eval=t_eval)
+
+    return {"time": sol.t.tolist(),
+            **{name: sol.y[i].tolist()
+               for i, name in enumerate(stock_names)}}
+\end{lstlisting}
+
+
+\section{Процесс генерации моделей}
+
+\subsection{Асинхронный конвейер}
+
+Для авторизованных пользователей процесс генерации модели запускается как фоновая \texttt{asyncio}-задача через \texttt{asyncio.create\_task}, что обеспечивает:
+
+\begin{itemize}
+    \item Неблокирующую обработку запросов (пользователь сразу получает ответ ассистента).
+    \item Устойчивость к таймаутам HTTP (генерация может занимать 30--120 секунд).
+    \item Возможность дальнейшего перехода на полноценную очередь задач (Taskiq, Celery и др.).
+\end{itemize}
+
+В гостевом режиме генерация выполняется синхронно в рамках одного запроса, поскольку не требует записи в базу данных.
+
+\subsection{Пошаговая реализация конвейера}
+
+Конвейер реализован в функции \texttt{generate\_model\_from\_description}:
+
+\begin{lstlisting}[caption={Основная функция конвейера генерации}, language=Python, basicstyle=\ttfamily\scriptsize]
+async def generate_model_from_description(description: str) -> dict:
+    llm = OpenRouterLLM()
+    validator = GraphValidator()
+    cld_builder = CLDBuilder(llm=llm)
+    sfd_builder = SFDBuilder(llm=llm)
+    exporter = VensimExporter()
+
+    # Stage 1: переменные
+    variables = await llm.chat_with_json_output(
+        prompt=VARIABLE_EXTRACTION_PROMPT.format(
+            description=description))
+
+    # Stage 2: CLD
+    cld_result = await cld_builder.build_from_variables(variables)
+
+    # Stage 3: уравнения
+    equations = await llm.chat_with_json_output(
+        prompt=EQUATION_GENERATION_PROMPT.format(
+            variables=json.dumps(variables),
+            cld=json.dumps(cld_result)))
+
+    # Stage 3b: постпроцессинг defaults
+    equations = post_process_equations(variables, equations)
+
+    # Stage 4: согласованность
+    consistency = validator.validate_model_consistency(
+        variables, equations,
+        cld_result["nodes"], cld_result["edges"])
+
+    # Stage 5: SFD
+    sfd_result = await sfd_builder.build_from_equations(
+        variables, equations)
+
+    # Stage 6: Python-код (детерминированно)
+    python_code = generate_python_code(variables, equations)
+
+    # Stage 7: Vensim-экспорт
+    vensim_code = exporter.export_to_vensim(variables, equations)
+
+    return {
+        "status": "completed",
+        "variables": variables,
+        "equations": equations,
+        "cld_data": { ... },
+        "sfd_data": { ... },
+        "python_code": python_code,
+        "vensim_code": vensim_code,
+        "log": result_log,
+    }
+\end{lstlisting}
+
+
+\section{Тестирование}
+
+\subsection{Стратегия тестирования}
+
+Тестирование платформы \texttt{sdCloud} проводится на нескольких уровнях:
+
+\begin{enumerate}
+    \item \textbf{Модульные тесты} (unit tests) --- проверка отдельных функций и классов.
+    \item \textbf{Интеграционные тесты} --- проверка взаимодействия компонентов.
+    \item \textbf{API-тесты} --- проверка эндпоинтов REST API.
+    \item \textbf{End-to-end тесты} --- проверка полного сценария использования.
+\end{enumerate}
+
+\subsection{Модульные тесты}
+
+Модульные тесты реализованы с использованием фреймворка \textbf{pytest} и его расширения \textbf{pytest-asyncio} для тестирования асинхронного кода. Покрытие тестами включает следующие модули:
+
+\begin{lstlisting}[caption={Пример модульного теста валидации CLD}, language=Python, basicstyle=\ttfamily\scriptsize]
+import pytest
+import networkx as nx
+from app.services.validate import validate_cld
+from app.schemas.clod import CLDSchema, Edge
+
+@pytest.mark.parametrize("cld,expected_valid", [
+    # Корректный CLD с обратной связью
+    (CLDSchema(
+        variables=["A", "B", "C"],
+        edges=[
+            Edge(from_="A", to="B", polarity="+"),
+            Edge(from_="B", to="C", polarity="+"),
+            Edge(from_="C", to="A", polarity="-")
+        ],
+        loops=[{"type": "B", "variables": ["A", "B", "C"]}]
+    ), True),
+    # CLD без обратных связей
+    (CLDSchema(
+        variables=["A", "B"],
+        edges=[Edge(from_="A", to="B", polarity="+")],
+        loops=[]
+    ), False),
+    # CLD с изолированной переменной
+    (CLDSchema(
+        variables=["A", "B", "C"],
+        edges=[
+            Edge(from_="A", to="B", polarity="+")
+        ],
+        loops=[]
+    ), False),
+])
+def test_validate_cld(cld, expected_valid):
+    result = validate_cld(cld)
+    assert result.valid == expected_valid
+\end{lstlisting}
+
+\subsection{Интеграционные тесты}
+
+Интеграционные тесты проверяют взаимодействие компонентов с использованием тестовой базы данных (SQLite в памяти) и моков внешних сервисов:
+
+\begin{lstlisting}[caption={Пример интеграционного теста API}, language=Python, basicstyle=\ttfamily\scriptsize]
+import pytest
+from httpx import AsyncClient
+from app.main import app
+
+@pytest.mark.asyncio
+async def test_create_session(async_client: AsyncClient):
+    response = await async_client.post("/api/v1/sessions", json={
+        "title": "Test Session",
+        "description": "Test description"
+    })
+    assert response.status_code == 201
+    data = response.json()
+    assert data["title"] == "Test Session"
+    assert "id" in data
+
+@pytest.mark.asyncio
+async def test_generate_model_flow(async_client: AsyncClient,
+                                   mock_llm_client):
+    # Создание сессии
+    session = await async_client.post("/api/v1/sessions", json={
+        "title": "Population Model"
+    })
+    session_id = session.json()["id"]
+
+    # Отправка запроса на генерацию
+    response = await async_client.post(
+        f"/api/v1/sessions/{session_id}/messages",
+        json={"content": "Population growth model",
+              "generate_model": True}
+    )
+    assert response.status_code == 202
+    assert "task_id" in response.json()
+\end{lstlisting}
+
+\subsection{Тестовые данные}
+
+В ходе разработки платформы была выполнена серия практических прогонов на типовых задачах системной динамики, включая модель роста популяции кроликов с ограниченными ресурсами и модель динамики рынка с функциями \texttt{MAX}. В процессе были выявлены и устранены следующие проблемы:
+
+\begin{itemize}
+    \item \textbf{Ошибка импорта \texttt{integ} в PySD 3.14.x} --- решена fallback-симуляцией через SciPy \texttt{solve\_ivp}.
+    \item \textbf{Нулевые defaults у констант и уровней} --- решена эвристической подстановкой realistic defaults в постпроцессоре.
+    \item \textbf{Недетерминированная генерация Python-кода LLM} --- заменена детерминированным генератором по уравнениям.
+    \item \textbf{Функции \texttt{MAX}/\texttt{MIN}/\texttt{ABS} в верхнем регистре} --- нормализованы к Python-встроенным аналогам.
+    \item \textbf{Тёмная тема визуализации графов} --- улучшена контрастность узлов и рёбер React Flow.
+    \item \textbf{Проблемы авторизации в гостевом режиме} --- устранены редиректы 401 для анонимных пользователей.
+\end{itemize}
+
+Для тестирования генерации используется набор тестовых описаний систем различной сложности:
+
+\begin{table}[H]
+    \centering
+    \caption{Тестовые кейсы для генерации моделей}
+    \label{tab:test-cases}
+    \begin{tabular}{|p{1.8cm}|p{10cm}|p{2cm}|}
+        \hline
+        \textbf{Код} & \textbf{Описание} & \textbf{Сложность} \\
+        \hline
+        TC-01 & Модель роста популяции с ограниченными ресурсами & Низкая \\
+        \hline
+        TC-02 & Модель эпидемии SIR (восприимчивые, инфицированные, выздоровевшие) & Низкая \\
+        \hline
+        TC-03 & Модель производственного предприятия с цепью поставок & Средняя \\
+        \hline
+        TC-04 & Модель динамики цен на рынке с конкуренцией & Средняя \\
+        \hline
+        TC-05 & Модель городской мобильности с несколькими видами транспорта & Высокая \\
+        \hline
+        TC-06 & Модель распространения инноваций (adoption model) & Низкая \\
+        \hline
+        TC-07 & Модель управления запасами с задержками & Средняя \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subsection{Результаты тестирования}
+
+Результаты тестирования показали, что платформа успешно обрабатывает запросы генерации и симуляции для тестовых кейсов низкой и средней сложности. Детерминированный генератор Python-кода и fallback-симуляция через SciPy существенно повысили стабильность конвейера: типовые модели (рост популяции, рыночная динамика) успешно проходят генерацию и запускаются на симуляцию.
+
+Для кейсов высокой сложности и при использовании бесплатных 30B-моделей на OpenRouter наблюдается снижение качества генерации: нестабильный структурированный вывод, ограниченные рассуждения, возможные отказы API. В текущей версии для повышения надёжности применяются жёсткий постпроцессинг, fallback-механизмы и детерминированная генерация кода. Дальнейшее развитие в сторону мультиагентной системы и сложных сценариев требует более мощных и стабильных языковых моделей.
