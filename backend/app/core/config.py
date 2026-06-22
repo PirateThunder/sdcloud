@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "sdCloud"
-    app_version: str = "1.0.0"
+    app_version: str = "1.0.2"
     debug: bool = False
     environment: str = "development"
 
@@ -27,10 +27,10 @@ class Settings(BaseSettings):
     port: int = 54101
 
     # Database (local development defaults, random high-range ports)
-    database_url: str = "postgresql+asyncpg://sdcloud:sdcloud@localhost:58749/sdcloud"
+    database_url: str = "postgresql+asyncpg://sdcloud:sdcloud@localhost:50728/sdcloud"
 
     # Redis (local development defaults, DB index 1 to isolate from other projects)
-    redis_url: str = "redis://localhost:59293/1"
+    redis_url: str = "redis://localhost:54507/1"
 
     # Security
     secret_key: str = "super-secret-change-in-production"

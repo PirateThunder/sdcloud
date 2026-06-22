@@ -312,10 +312,10 @@ class Simulation:
 PORT=54101
 
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:58749/sdcloud
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:50728/sdcloud
 
 # Redis
-REDIS_URL=redis://localhost:59293/1
+REDIS_URL=redis://localhost:54507/1
 
 # JWT
 SECRET_KEY=your-secret-key

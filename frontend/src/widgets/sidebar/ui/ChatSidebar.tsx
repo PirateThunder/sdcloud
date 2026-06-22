@@ -18,6 +18,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn, truncateText } from "@/shared/lib/utils";
+import { APP_VERSION } from "@/shared/config/version";
 
 interface ChatSidebarProps {
   isOpen: boolean;
@@ -135,9 +136,12 @@ export function ChatSidebar({ isOpen }: ChatSidebarProps) {
       )}
 
       <Separator />
-      <div className="p-3 text-center">
+      <div className="p-3 text-center space-y-1">
         <p className="text-[10px] text-muted-foreground">
           sdCloud — AI для системной динамики
+        </p>
+        <p className="text-[9px] text-muted-foreground/60">
+          v{APP_VERSION}
         </p>
       </div>
     </aside>

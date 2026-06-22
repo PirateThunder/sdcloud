@@ -1,12 +1,25 @@
 # ──────────────────────────────────────────────────────────────
 # Пример shared-инфраструктуры (admin / infrastructure)
 #
-# Этот файл — справочный пример. Предполагается, что Nginx Proxy Manager
-# уже развёрнут на пользователе admin и подключён к Docker-сети shared_network.
+# Этот файл — справочный пример. Запускается на пользователе admin.
 #
-# Здесь показано, как добавить в ту же сеть общие PostgreSQL и Redis,
-# чтобы несколько проектов (sdcloud, main_website и др.) использовали
-# один инстанс БД/кэша, но работали в изолированных базах / Redis DB.
+# Включает:
+#   • Nginx Proxy Manager
+#   • shared PostgreSQL 16
+#   • shared Redis 7
+#
+# Все сервисы подключены к Docker-сети shared_network.
+# К ней же подключаются проектные compose-файлы (sdcloud, project2, ...).
+#
+# Внешние порты:
+#   PostgreSQL: 0.0.0.0:50728 → 5432  (для подключения pgAdmin/DBeaver)
+#   Redis:      127.0.0.1:54507 → 6379  (только локально на сервере)
+#
+# БЕЗОПАСНОСТЬ:
+#   • PostgreSQL доступен извне — обязательно используйте сильный пароль
+#     и ограничьте доступ файрволом (ufw/iptables) только нужным IP.
+#   • Redis привязан к 127.0.0.1, чтобы не торчать наружу.
+#   • Панель NPM (порт 81) привязана к 127.0.0.1 — используйте SSH-туннель.
 #
 # Запуск (от пользователя admin, в директории infra):
 #   docker network create shared_network  # если ещё не создана
@@ -16,17 +29,23 @@
 services:
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
-    container_name: nginx-proxy-manager
+    container_name: global_nginx_proxy
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"   # Admin UI
+      # Admin UI — только через SSH-туннель, не открываем наружу
+      - "127.0.0.1:81:81"
     volumes:
       - npm_data:/data
       - npm_letsencrypt:/etc/letsencrypt
     networks:
       - shared_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:16-alpine
@@ -35,6 +54,11 @@ services:
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: change-me-strong-password
+      POSTGRES_DB: admin
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      # Доступ извне для pgAdmin/DBeaver. Ограничьте IP на файрволе!
+      - "0.0.0.0:50728:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d:ro
@@ -45,11 +69,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
     container_name: shared-redis
     restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      # Только локальный доступ с сервера admin
+      - "127.0.0.1:54507:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -59,6 +88,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
 
 volumes:
   npm_data:

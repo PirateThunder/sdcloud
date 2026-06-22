@@ -179,8 +179,8 @@ docker compose -f deploy/infra-example/docker-compose.local.yaml up -d
 ```
 
 Это создаст Docker-сеть `shared_network` и контейнеры:
-- `shared-postgres` (доступен на `localhost:58749`)
-- `shared-redis` (доступен на `localhost:59293`)
+- `shared-postgres` (внутри сети — `shared-postgres:5432`, для pgAdmin/DBeaver с хоста — `localhost:50728`)
+- `shared-redis` (внутри сети — `shared-redis:6379`, с хоста — `localhost:54507`)
 
 > Для каждого нового проекта создавайте отдельную базу и пользователя через скрипты в `deploy/infra-example/init/`, либо вручную.
 
@@ -221,17 +221,18 @@ Shared PostgreSQL/Redis при этом продолжают работать и
 
 ### Вопрос: могут ли другие проекты стучаться в PostgreSQL/Redis из `docker-compose.local.yaml`?
 
-**Краткий ответ:** в текущей self-contained конфигурации (`docker-compose.local.yaml`) — нет, не в «чистом» виде.
+**Краткий ответ:** в self-contained конфигурации (`docker-compose.local.yaml`) — нет, не в «чистом» виде.
 
-**Почему:** в `docker-compose.local.yaml` PostgreSQL и Redis живут внутри приватной Docker-сети `sdcloud-network`, которая принадлежит только этому compose-проекту. Host-порты (`58749`, `59293`) привязаны к `127.0.0.1`, то есть доступны только с самого хоста. Другие Docker-контейнеры не могут подключиться к `127.0.0.1` хоста напрямую (кроме режима `host`), и не видят контейнеры sdcloud по имени, потому что находятся в другой сети.
+**Почему:** в `docker-compose.local.yaml` PostgreSQL и Redis живут внутри приватной Docker-сети `sdcloud-network`, которая принадлежит только этому compose-проекту. Host-порты (`58749`, `59293`) привязаны к `127.0.0.1`, то есть доступны только с самого хоста. Другие Docker-контейнеры не видят эту сеть и не могут подключиться по имени контейнера.
 
 ### Как сделать общий доступ
 
-1. Поднимите PostgreSQL/Redis через `deploy/infra-example/docker-compose.local.yaml` (или production-версию на пользователе `admin`). Эти контейнеры создают/используют сеть `shared_network`.
-2. Все проекты, которым нужен доступ, подключаются к `shared_network` и обращаются по именам контейнеров:
+1. Поднимите PostgreSQL/Redis через `deploy/infra-example/docker-compose.local.yaml` (или production-версию на пользователе `admin`). Эти контейнеры используют сеть `shared_network`.
+2. Все проекты подключаются к `shared_network` и обращаются по именам контейнеров:
    - `shared-postgres:5432`
    - `shared-redis:6379`
-3. Каждый проект использует **свою базу** в PostgreSQL и **свой Redis DB index** (например, `/1` для sdcloud, `/2` для project2).
+3. Для pgAdmin/DBeaver PostgreSQL также доступен по host-порту (например, `50728` в shared-конфигурации).
+4. Каждый проект использует **свою базу** в PostgreSQL и **свой Redis DB index** (например, `/1` для sdcloud, `/2` для project2).
 
 ### Пример docker-compose для project2
 
@@ -260,7 +261,9 @@ networks:
 - **Пользователь `admin`** (или отдельный инфра-пользователь):
   - запускает Nginx Proxy Manager, общий PostgreSQL и общий Redis;
   - все сервисы подключены к Docker-сети `shared_network`;
-  - единственные открытые наружу порты: `80`, `443` и панель NPM `81`.
+  - публичные веб-порты: `80`, `443`;
+  - панель NPM `81` привязана к `127.0.0.1` (SSH-туннель);
+  - PostgreSQL проброшен наружу на случайный high-range порт (например, `50728`) — доступ к нему должен быть ограничен файрволом только доверенным IP.
 - **Пользователь `sdcloud`**:
   - запускает только `backend` и `frontend`;
   - контейнеры подключены к `shared_network`;
@@ -330,6 +333,17 @@ NEXT_PUBLIC_API_URL=https://api.sdcloud.piratethunder.space
 
 > `NEXT_PUBLIC_API_URL` «запекается» в клиентский бандл на этапе сборки, поэтому его значение должно быть публичным API-доменом.
 
+### pgAdmin / DBeaver для production PostgreSQL
+
+PostgreSQL доступен извне на случайном high-range порту (например, `50728`). В pgAdmin используй:
+- **Host**: IP сервера
+- **Port**: `50728`
+- **Database**: `sdcloud`
+- **Username**: `sdcloud`
+- **Password**: пароль из `backend/.env`
+
+> Убедись, что порт открыт только твоему IP через файрвол (`ufw` / `iptables`).
+
 ### Запуск production
 
 ```bash
@@ -366,12 +380,14 @@ docker compose -f docker-compose.yaml down
 | `CORS_ORIGINS` | Разрешённые origins | `http://localhost:56555,http://localhost:5173` | `https://sdcloud.piratethunder.space` |
 | `OPENROUTER_API_KEY` | API-ключ OpenRouter | `sk-or-v1-...` | `sk-or-v1-...` |
 | `OPENROUTER_MODEL` | ID модели | `openrouter/google/gemma-4-31b-it:free` | `openrouter/google/gemma-4-31b-it:free` |
+| `APP_VERSION` | Версия проекта (backend) | `1.0.2` | `1.0.2` |
 
 ### Frontend (`frontend/.env.local`)
 
 | Переменная | Описание | Пример локально | Пример production |
 |---|---|---|---|
 | `NEXT_PUBLIC_API_URL` | Публичный URL backend API | `http://localhost:54101` | `https://api.sdcloud.piratethunder.space` |
+| `NEXT_PUBLIC_APP_VERSION` | Версия проекта (отображается в UI) | `1.0.2` | `1.0.2` |
 
 ---
 
@@ -404,8 +420,11 @@ docker compose -f docker-compose.local.yaml exec backend bash
 # ── Зайти в PostgreSQL (self-contained) ──
 docker compose -f docker-compose.local.yaml exec postgres psql -U sdcloud -d sdcloud
 
-# ── Зайти в shared PostgreSQL ──
+# ── Зайти в shared PostgreSQL (из контейнера) ──
 docker compose -f deploy/infra-example/docker-compose.local.yaml exec postgres psql -U admin
+
+# ── Подключиться к production/shared PostgreSQL с хоста (pgAdmin/DBeaver) ──
+psql -h localhost -p 50728 -U admin -d admin
 
 # ── Остановить и удалить локальные volumes ──
 docker compose -f docker-compose.local.yaml down -v
@@ -420,6 +439,7 @@ docker compose -f docker-compose.local.yaml down -v
 - Мультиагентная система и fine-tuning в текущей версии **отложены** — для стабильной работы на бесплатных моделях OpenRouter их реализация ненадёжна. План описан в `kimi-agent-plans.md`.
 - Redis DB index `1` выбран для изоляции от других проектов, использующих shared Redis.
 - В production PostgreSQL/Redis не входят в `docker-compose.yaml` — они развёртываются как shared-инфраструктура и доступны через `shared_network`.
+- PostgreSQL shared-инфраструктуры проброшен наружу на случайный high-range порт для pgAdmin/DBeaver. Redis остаётся доступным только внутри `shared_network` и с localhost сервера.
 
 ---
 
