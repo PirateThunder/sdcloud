@@ -32,8 +32,12 @@ COPY . .
 RUN mkdir -p /app/public
 
 # API URL is baked into the client bundle at build time
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_API_URL=http://localhost:54101
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+# Runtime port (random high-range port to avoid host conflicts)
+ARG PORT=56555
+ENV PORT=${PORT}
 
 RUN bun run build
 
@@ -43,8 +47,11 @@ FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+
+# Runtime port (random high-range port to avoid host conflicts)
+ARG PORT=56555
+ENV PORT=${PORT}
 
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
@@ -59,9 +66,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE ${PORT}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))" || exit 1
+  CMD node -e "require('http').get('http://localhost:${PORT}', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))" || exit 1
 
 CMD ["node", "server.js"]

@@ -22,15 +22,15 @@ class Settings(BaseSettings):
     debug: bool = False
     environment: str = "development"
 
-    # Server
+    # Server (random high-range port to avoid conflicts with other projects)
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 54101
 
-    # Database
-    database_url: str = "postgresql+asyncpg://sdcloud:sdcloud@localhost:5432/sdcloud"
+    # Database (local development defaults, random high-range ports)
+    database_url: str = "postgresql+asyncpg://sdcloud:sdcloud@localhost:58749/sdcloud"
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    # Redis (local development defaults, DB index 1 to isolate from other projects)
+    redis_url: str = "redis://localhost:59293/1"
 
     # Security
     secret_key: str = "super-secret-change-in-production"
@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # CORS
-    frontend_url: str = "http://localhost:3000"
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    frontend_url: str = "http://localhost:56555"
+    cors_origins: str = "http://localhost:56555,http://localhost:5173"
 
     # OpenRouter
     openrouter_api_key: str = ""

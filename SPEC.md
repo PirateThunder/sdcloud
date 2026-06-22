@@ -308,11 +308,14 @@ class Simulation:
 
 ## Конфигурация окружения (.env)
 ```
+# Server
+PORT=54101
+
 # Database
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost/sdcloud
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:58749/sdcloud
 
 # Redis
-REDIS_URL=redis://localhost:6379/0
+REDIS_URL=redis://localhost:59293/1
 
 # JWT
 SECRET_KEY=your-secret-key
@@ -324,10 +327,10 @@ OPENROUTER_API_KEY=your-api-key
 OPENROUTER_MODEL=openrouter/google/gemma-4-31b-it:free
 
 # CORS
-BACKEND_CORS_ORIGINS=http://localhost:3000
+BACKEND_CORS_ORIGINS=http://localhost:56555
 
 # API URL для фронта
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:54101
 ```
 
 ## Интеграция с OpenRouter

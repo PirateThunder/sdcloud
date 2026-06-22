@@ -1,0 +1,68 @@
+# ──────────────────────────────────────────────────────────────
+# Shared local infrastructure
+#
+# Поднимает общие PostgreSQL и Redis для локальной разработки.
+# Все проекты (sdcloud, project2, ...) могут использовать эти же контейнеры,
+# но работать в изолированных базах / Redis DB.
+#
+# Сеть shared_network создаётся этим compose-файлом.
+# Проекты подключаются к ней как external: true.
+#
+# Запуск (один раз на машине разработчика):
+#   docker compose -f deploy/infra-example/docker-compose.local.yaml up -d
+#
+# Подключение из проектов:
+#   DATABASE_URL=postgresql+asyncpg://sdcloud:sdcloud@shared-postgres:5432/sdcloud
+#   REDIS_URL=redis://shared-redis:6379/1
+#
+# Host-доступ для pgAdmin / redis-cli:
+#   PostgreSQL: localhost:58749
+#   Redis:      localhost:59293
+# ──────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shared-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: change-me-strong-password
+    ports:
+      - "127.0.0.1:58749:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - shared_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: shared-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:59293:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - shared_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  shared_network:
+    driver: bridge

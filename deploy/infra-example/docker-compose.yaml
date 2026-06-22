@@ -1,0 +1,71 @@
+# ──────────────────────────────────────────────────────────────
+# Пример shared-инфраструктуры (admin / infrastructure)
+#
+# Этот файл — справочный пример. Предполагается, что Nginx Proxy Manager
+# уже развёрнут на пользователе admin и подключён к Docker-сети shared_network.
+#
+# Здесь показано, как добавить в ту же сеть общие PostgreSQL и Redis,
+# чтобы несколько проектов (sdcloud, main_website и др.) использовали
+# один инстанс БД/кэша, но работали в изолированных базах / Redis DB.
+#
+# Запуск (от пользователя admin, в директории infra):
+#   docker network create shared_network  # если ещё не создана
+#   docker compose -f docker-compose.yaml up -d
+# ──────────────────────────────────────────────────────────────
+
+services:
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"   # Admin UI
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - shared_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: shared-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: change-me-strong-password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - shared_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: shared-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - shared_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  npm_data:
+  npm_letsencrypt:
+  postgres_data:
+  redis_data:
+
+networks:
+  shared_network:
+    external: true

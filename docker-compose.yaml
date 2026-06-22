@@ -1,58 +1,33 @@
 # ──────────────────────────────────────────────────────────────
-# sdCloud — Full Stack Docker Compose
-# Backend + Frontend + PostgreSQL + Redis
+# sdCloud — Production Docker Compose
+#
+# Запускает только backend + frontend. Предполагается, что:
+#  • PostgreSQL и Redis подняты отдельно (shared) и доступны
+#    в Docker-сети shared_network;
+#  • Nginx Proxy Manager (jc21/nginx-proxy-manager) тоже подключён
+#    к shared_network и проксирует запросы по именам контейнеров.
+#
+# Ни один публичный порт здесь не открывается — весь входящий трафик
+# идёт через Nginx Proxy Manager.
+#
+# Внутренние порты контейнеров:
+#   Backend  : 54101
+#   Frontend : 56555
+#
+# Пример запуска:
+#   docker compose -f docker-compose.yaml --env-file backend/.env up -d --build
 # ──────────────────────────────────────────────────────────────
 
 services:
-  # ── PostgreSQL Database ────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: sdcloud-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: sdcloud
-      POSTGRES_PASSWORD: sdcloud
-      POSTGRES_DB: sdcloud
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sdcloud -d sdcloud"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - sdcloud-network
-
-  # ── Redis Cache & Message Broker ───────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: sdcloud-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    networks:
-      - sdcloud-network
-
   # ── Backend API ────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        PORT: 54101
     container_name: sdcloud-backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       # App
       APP_NAME: sdCloud
@@ -60,36 +35,22 @@ services:
       DEBUG: "false"
       ENVIRONMENT: production
       HOST: 0.0.0.0
-      PORT: 8000
-      # Database
-      DATABASE_URL: postgresql+asyncpg://sdcloud:sdcloud@postgres:5432/sdcloud
-      # Redis
-      REDIS_URL: redis://redis:6379/0
-      # Security
-      SECRET_KEY: ${SECRET_KEY:-super-secret-change-in-production}
-      ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: 30
-      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      PORT: 54101
       # CORS
-      FRONTEND_URL: http://localhost:3000
-      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
-      # OpenRouter settings are loaded from backend/.env via env_file below
+      FRONTEND_URL: ${FRONTEND_URL:-https://sdcloud.piratethunder.space}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://sdcloud.piratethunder.space}
+      # OpenRouter / прочие секреты берутся из backend/.env
     env_file:
       - ./backend/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
-      - sdcloud-network
+      - shared_network
     command: >
       sh -c "
         alembic upgrade head &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+        uvicorn app.main:app --host 0.0.0.0 --port 54101 --workers 2
       "
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:54101/api/v1/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -101,26 +62,23 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # URL used by the browser to reach the backend API.
-        # This value is baked into the client bundle at build time.
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        # Этот URL "запекается" в клиентский бандл на этапе сборки.
+        # В production браузер будет ходить напрямую на API-поддомен.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.sdcloud.piratethunder.space}
+        PORT: 56555
     container_name: sdcloud-frontend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
-      # URL used by the Next.js server for any server-side requests
-      API_URL: http://backend:8000
+      # Для серверных запросов Next.js используем внутреннее имя контейнера.
+      API_URL: http://sdcloud-backend:54101
+      PORT: 56555
+      HOSTNAME: 0.0.0.0
     depends_on:
       backend:
         condition: service_healthy
     networks:
-      - sdcloud-network
-
-volumes:
-  postgres_data:
-  redis_data:
+      - shared_network
 
 networks:
-  sdcloud-network:
-    driver: bridge
+  shared_network:
+    external: true
