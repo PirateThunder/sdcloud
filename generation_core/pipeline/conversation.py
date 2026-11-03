@@ -1,9 +1,14 @@
+import os
 from pathlib import Path
 
-from pydantic import ValidationError
-
-from .exceptions import ModelValidationError
-from .generation import _save_stage, conversation_history, generate_model, model_context
+from .generation import (
+    _call_stage,
+    _RepairBudget,
+    _save_stage,
+    conversation_history,
+    generate_model,
+    model_context,
+)
 from .llm import LLMClient
 from .prompts import CONVERSATION_PROMPT
 from .schemas import (
@@ -21,23 +26,25 @@ async def respond_to_message(
     workdir: Path | None = None,
     max_repairs: int | None = None,
 ) -> ConversationResponse:
+    repairs = max_repairs if max_repairs is not None else int(os.environ.get("LLM_MAX_REPAIRS", "3"))
+    budget = _RepairBudget(max(0, min(repairs, 3)))
     _save_stage(workdir, "message")
     base_model = model_context(request.base_model) if request.base_model else "null"
-    response = await llm.chat_json(
-        CONVERSATION_PROMPT.format(
+    decision = await _call_stage(
+        llm,
+        stage="message",
+        prompt=CONVERSATION_PROMPT.format(
             history=conversation_history(request),
             base_model=base_model,
             description=request.description,
         ),
-        stage="message",
         system="You are a helpful system dynamics assistant. Return only JSON.",
         temperature=0.2,
         response_schema=MessageDecision.model_json_schema(),
+        parser=MessageDecision.model_validate,
+        budget=budget,
+        workdir=workdir,
     )
-    try:
-        decision = MessageDecision.model_validate(response)
-    except ValidationError as exc:
-        raise ModelValidationError(f"invalid conversation decision: {exc}") from exc
     _save_stage(workdir, "message", decision.model_dump(mode="json"))
 
     if decision.action in {"answer", "clarify"}:

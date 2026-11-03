@@ -1,11 +1,95 @@
 from __future__ import annotations
 
-from .ir import dependencies
-from .schemas import ModelDocument, ValidationIssue
+from .ir import constant_number, dependencies, walk
+from .schemas import CallExpression, ModelDocument, TimeExpression, ValidationIssue
 
 
 def _issue(code: str, path: str, message: str) -> ValidationIssue:
     return ValidationIssue(code=code, severity="error", path=path, message=message)
+
+
+def _sirs_issues(document: ModelDocument) -> list[ValidationIssue]:
+    issues = []
+    flows = [item for item in document.variables if item.kind == "flow"]
+    infection = next(
+        (
+            flow
+            for flow in flows
+            if flow.source
+            and flow.source.id == "susceptible"
+            and flow.target
+            and flow.target.id == "infectious"
+            and {"susceptible", "infectious"} <= dependencies(flow.expression)
+        ),
+        None,
+    )
+    if infection is None:
+        issues.append(
+            _issue(
+                "SEMANTIC_INFECTION_MISSING",
+                "variables",
+                "SIRS needs infection from susceptible to infectious controlled by both stocks",
+            )
+        )
+    immunity_loss = next(
+        (
+            flow
+            for flow in flows
+            if flow.source
+            and flow.source.id == "recovered"
+            and flow.target
+            and flow.target.id == "susceptible"
+        ),
+        None,
+    )
+    if immunity_loss is None:
+        issues.append(
+            _issue(
+                "SEMANTIC_IMMUNITY_LOSS_MISSING",
+                "variables",
+                "SIRS needs an immunity-loss flow from recovered to susceptible",
+            )
+        )
+    seasonal = [
+        item
+        for item in document.variables
+        if item.kind == "auxiliary"
+        and any(isinstance(node, TimeExpression) for node in walk(item.expression))
+        and any(
+            isinstance(node, CallExpression) and node.name in {"sin", "cos"}
+            for node in walk(item.expression)
+        )
+    ]
+    if not seasonal or (
+        infection is not None
+        and not any(item.id in dependencies(infection.expression) for item in seasonal)
+    ):
+        issues.append(
+            _issue(
+                "SEMANTIC_SEASONALITY_MISSING",
+                "variables",
+                "SIRS infection needs a seasonal sin/cos contact-rate auxiliary driven by time",
+            )
+        )
+    variables = {item.id: item for item in document.variables}
+    base = variables.get("base_contact_rate")
+    duration = variables.get("infectious_duration")
+    if base is not None and duration is not None:
+        base_value = constant_number(base.expression)
+        duration_value = constant_number(duration.expression)
+        if (
+            base_value is not None
+            and duration_value is not None
+            and base_value * duration_value < 1
+        ):
+            issues.append(
+                _issue(
+                    "SEMANTIC_NO_EPIDEMIC_GROWTH",
+                    "variables.base_contact_rate",
+                    "base_contact_rate * infectious_duration must be at least 1 for epidemic waves",
+                )
+            )
+    return issues
 
 
 def semantic_issues(document: ModelDocument) -> list[ValidationIssue]:
@@ -74,6 +158,8 @@ def semantic_issues(document: ModelDocument) -> list[ValidationIssue]:
                         "predator-prey model needs predator growth driven by prey or predation",
                     )
                 )
+    if document.pattern_id == "sirs_epidemic":
+        issues.extend(_sirs_issues(document))
     return issues
 
 

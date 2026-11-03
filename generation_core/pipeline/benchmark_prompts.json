@@ -18,5 +18,11 @@
   {"id": "bass_launch", "description": "A product launch has adoption driven by external innovation and word of mouth from current adopters.", "expected_pattern": "bass_diffusion"},
   {"id": "supply_warehouse", "description": "Warehouse replenishment arrives after a shipping delay while customer demand depletes inventory.", "expected_pattern": "supply_delay"},
   {"id": "resource_forest", "description": "A renewable forest regenerates toward its carrying capacity while timber is harvested at a fractional rate.", "expected_pattern": "renewable_resource"},
-  {"id": "exponential_interest", "description": "A bank deposit grows continuously at a fixed interest rate without withdrawals.", "expected_pattern": "exponential_growth"}
+  {"id": "exponential_interest", "description": "A bank deposit grows continuously at a fixed interest rate without withdrawals.", "expected_pattern": "exponential_growth"},
+  {"id": "sirs_seasonal", "description": "SIRS epidemic with seasonal contact rates and waning immunity producing repeated waves.", "expected_pattern": "sirs_epidemic", "expected_behavior": "repeated_waves"},
+  {"id": "supply_bullwhip", "description": "Supply chain with a demand step, shipping delays and bullwhip amplification of orders.", "expected_pattern": "supply_chain_bullwhip", "expected_behavior": "bullwhip"},
+  {"id": "student_speaking_club", "description": "Students create an English speaking club with capacity limits, burnout and a recruitment campaign after week 60.", "expected_pattern": "student_club", "expected_behavior": "campaign_wave"},
+  {"id": "lorenz_chaos", "description": "Lorenz system with three coupled stocks and a chaotic butterfly attractor.", "expected_pattern": "lorenz_system", "expected_behavior": "chaotic_sign_changes"},
+  {"id": "van_der_pol_cycle", "description": "Van der Pol oscillator with nonlinear damping and a relaxation limit cycle.", "expected_pattern": "van_der_pol_oscillator", "expected_behavior": "limit_cycle"},
+  {"id": "duffing_two_wells", "description": "Driven Duffing oscillator with two wells and irregular switching between states.", "expected_pattern": "duffing_oscillator", "expected_behavior": "two_wells"}
 ]

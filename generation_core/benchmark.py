@@ -30,7 +30,8 @@ async def main() -> int:
         write_json_atomic(args.output, result)
         print(
             f"benchmark: cases={result['cases']}, executable={result['executable_rate']:.1%}, "
-            f"semantic={result['semantic_rate']:.1%}, output={args.output}"
+            f"semantic={result['semantic_rate']:.1%}, behavior={result['behavior_rate']:.1%}, "
+            f"finite={result['finite_rate']:.1%}, output={args.output}"
         )
         return 0
     finally:

@@ -4,8 +4,10 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .expression_parser import parse_expression
 from .ir import binary, call, lit, ref
 from .schemas import (
+    AuxiliaryVariable,
     ConstantVariable,
     FlowEndpoint,
     FlowVariable,
@@ -53,12 +55,29 @@ def _flow(name: str, units: dict[str, int], expression, source: str, target: str
     )
 
 
-def _model(name: str, variables: list, *, unit: str = "year") -> ModelDocument:
+def _auxiliary(name: str, units: dict[str, int], expression):
+    return AuxiliaryVariable(id=name, kind="auxiliary", expression=expression, units=units)
+
+
+def _model(
+    name: str,
+    variables: list,
+    *,
+    unit: str = "year",
+    final_time: float = 100,
+    time_step: float = 0.25,
+    saveper: float | None = None,
+) -> ModelDocument:
     return finalize_model(
         ModelDocument(
             name=name,
             description=f"Validated pattern: {name}",
-            time=TimeSettings(unit=unit, final_time=100, time_step=0.25, saveper=0.25),
+            time=TimeSettings(
+                unit=unit,
+                final_time=final_time,
+                time_step=time_step,
+                saveper=saveper if saveper is not None else time_step,
+            ),
             variables=variables,
         )
     )
@@ -364,6 +383,292 @@ def renewable_resource() -> ModelDocument:
     )
 
 
+def sirs_epidemic() -> ModelDocument:
+    return _model(
+        "Seasonal SIRS epidemic",
+        [
+            _stock(
+                "susceptible",
+                {"person": 1},
+                binary("sub", ref("total_population"), ref("initial_infectious")),
+            ),
+            _stock("infectious", {"person": 1}, ref("initial_infectious")),
+            _stock("recovered", {"person": 1}, 0),
+            _auxiliary(
+                "contact_rate",
+                {"day": -1},
+                parse_expression(
+                    "base_contact_rate * (1 + seasonal_amplitude * sin(2 * pi * time / seasonal_period))"
+                ),
+            ),
+            _flow(
+                "infection",
+                {"person": 1, "day": -1},
+                parse_expression(
+                    "susceptible * infectious / total_population * contact_rate"
+                ),
+                "susceptible",
+                "infectious",
+            ),
+            _flow(
+                "recovery",
+                {"person": 1, "day": -1},
+                parse_expression("infectious / infectious_duration"),
+                "infectious",
+                "recovered",
+            ),
+            _flow(
+                "immunity_loss",
+                {"person": 1, "day": -1},
+                parse_expression("recovered / immunity_duration"),
+                "recovered",
+                "susceptible",
+            ),
+            _constant("total_population", {"person": 1}, 1000),
+            _constant("initial_infectious", {"person": 1}, 5),
+            _constant("base_contact_rate", {"day": -1}, 0.35),
+            _constant("infectious_duration", {"day": 1}, 5),
+            _constant("immunity_duration", {"day": 1}, 90),
+            _constant("seasonal_amplitude", {}, 0.6),
+            _constant("seasonal_period", {"day": 1}, 365),
+        ],
+        unit="day",
+        final_time=730,
+        time_step=0.5,
+        saveper=1,
+    )
+
+
+def supply_chain_bullwhip() -> ModelDocument:
+    return _model(
+        "Supply chain bullwhip",
+        [
+            _stock("inventory", {"item": 1}, ref("initial_inventory")),
+            _stock("supply_line", {"item": 1}, ref("initial_supply_line")),
+            _auxiliary(
+                "demand",
+                {"item": 1, "week": -1},
+                parse_expression("if_then_else(time >= 10, high_demand, base_demand)"),
+            ),
+            _auxiliary(
+                "expected_demand",
+                {"item": 1, "week": -1},
+                parse_expression("smooth(demand, forecast_time)"),
+            ),
+            _auxiliary(
+                "target_inventory",
+                {"item": 1},
+                parse_expression("expected_demand * coverage_time"),
+            ),
+            _auxiliary(
+                "target_supply_line",
+                {"item": 1},
+                parse_expression("expected_demand * lead_time"),
+            ),
+            _flow(
+                "order_rate",
+                {"item": 1, "week": -1},
+                parse_expression(
+                    "max(expected_demand + (target_inventory - inventory) / adjustment_time + "
+                    "(target_supply_line - supply_line) / adjustment_time, zero_rate)"
+                ),
+                "cloud:supplier_orders",
+                "supply_line",
+            ),
+            _flow(
+                "shipments",
+                {"item": 1, "week": -1},
+                parse_expression("delay3(order_rate, lead_time)"),
+                "supply_line",
+                "inventory",
+            ),
+            _flow(
+                "sales",
+                {"item": 1, "week": -1},
+                parse_expression("demand"),
+                "inventory",
+                "cloud:customer_sink",
+            ),
+            _constant("initial_inventory", {"item": 1}, 400),
+            _constant("initial_supply_line", {"item": 1}, 400),
+            _constant("base_demand", {"item": 1, "week": -1}, 100),
+            _constant("high_demand", {"item": 1, "week": -1}, 160),
+            _constant("coverage_time", {"week": 1}, 4),
+            _constant("lead_time", {"week": 1}, 4),
+            _constant("forecast_time", {"week": 1}, 2),
+            _constant("adjustment_time", {"week": 1}, 2),
+            _constant("zero_rate", {"item": 1, "week": -1}, 0),
+        ],
+        unit="week",
+    )
+
+
+def student_club() -> ModelDocument:
+    return _model(
+        "Student speaking club",
+        [
+            _stock("interested_students", {"person": 1}, 500),
+            _stock("active_members", {"person": 1}, 20),
+            _stock("tired_members", {"person": 1}, 0),
+            _auxiliary(
+                "capacity_factor",
+                {},
+                parse_expression("max(1 - active_members / club_capacity, zero_dimensionless)"),
+            ),
+            _auxiliary(
+                "campaign_factor",
+                {},
+                parse_expression(
+                    "if_then_else(time >= 60, campaign_boost, baseline_campaign)"
+                ),
+            ),
+            _flow(
+                "joining",
+                {"person": 1, "week": -1},
+                parse_expression(
+                    "interested_students * joining_rate * "
+                    "(1 + word_of_mouth * active_members / club_capacity) * "
+                    "capacity_factor * campaign_factor"
+                ),
+                "interested_students",
+                "active_members",
+            ),
+            _flow(
+                "leaving",
+                {"person": 1, "week": -1},
+                parse_expression(
+                    "active_members * leaving_rate + active_members * overcrowding_rate * "
+                    "max(active_members / club_capacity - 1, zero_dimensionless)"
+                ),
+                "active_members",
+                "tired_members",
+            ),
+            _flow(
+                "returning",
+                {"person": 1, "week": -1},
+                parse_expression("tired_members / recovery_time"),
+                "tired_members",
+                "interested_students",
+            ),
+            _constant("club_capacity", {"person": 1}, 80),
+            _constant("joining_rate", {"week": -1}, 0.15),
+            _constant("leaving_rate", {"week": -1}, 0.08),
+            _constant("overcrowding_rate", {"week": -1}, 0.3),
+            _constant("word_of_mouth", {}, 1.5),
+            _constant("recovery_time", {"week": 1}, 20),
+            _constant("baseline_campaign", {}, 1),
+            _constant("campaign_boost", {}, 3),
+            _constant("zero_dimensionless", {}, 0),
+        ],
+        unit="week",
+        final_time=104,
+    )
+
+
+def lorenz_system() -> ModelDocument:
+    state_rate = {"state": 1, "time": -1}
+    return _model(
+        "Lorenz system",
+        [
+            _stock("x", {"state": 1}, 1),
+            _stock("y", {"state": 1}, 1),
+            _stock("z", {"state": 1}, 1),
+            _flow("dx", state_rate, parse_expression("sigma * (y - x)"), "cloud:x_source", "x"),
+            _flow(
+                "dy",
+                state_rate,
+                parse_expression("rho * x - decay_y * y - coupling_rate * x * z"),
+                "cloud:y_source",
+                "y",
+            ),
+            _flow(
+                "dz",
+                state_rate,
+                parse_expression("xy_rate * x * y - beta * z"),
+                "cloud:z_source",
+                "z",
+            ),
+            _constant("sigma", {"time": -1}, 10),
+            _constant("rho", {"time": -1}, 28),
+            _constant("beta", {"time": -1}, 8 / 3),
+            _constant("coupling_rate", {"state": -1, "time": -1}, 1),
+            _constant("decay_y", {"time": -1}, 1),
+            _constant("xy_rate", {"state": -1, "time": -1}, 1),
+        ],
+        unit="time",
+        time_step=0.01,
+        saveper=0.05,
+    )
+
+
+def van_der_pol_oscillator() -> ModelDocument:
+    return _model(
+        "Van der Pol oscillator",
+        [
+            _stock("position", {}, 2),
+            _stock("velocity", {"time": -1}, 0),
+            _flow(
+                "d_position",
+                {"time": -1},
+                parse_expression("velocity"),
+                "cloud:position_source",
+                "position",
+            ),
+            _flow(
+                "d_velocity",
+                {"time": -2},
+                parse_expression(
+                    "mu * (1 - position^2) * velocity - acceleration_scale * position"
+                ),
+                "cloud:velocity_source",
+                "velocity",
+            ),
+            _constant("mu", {"time": -1}, 3),
+            _constant("acceleration_scale", {"time": -2}, 1),
+        ],
+        unit="time",
+        final_time=60,
+        time_step=0.01,
+        saveper=0.05,
+    )
+
+
+def duffing_oscillator() -> ModelDocument:
+    return _model(
+        "Duffing oscillator",
+        [
+            _stock("position", {"length": 1}, 1),
+            _stock("velocity", {"length": 1, "time": -1}, 0),
+            _flow(
+                "d_position",
+                {"length": 1, "time": -1},
+                parse_expression("velocity"),
+                "cloud:position_source",
+                "position",
+            ),
+            _flow(
+                "d_velocity",
+                {"length": 1, "time": -2},
+                parse_expression(
+                    "-delta * velocity - alpha * position - beta * position^3 + "
+                    "gamma * cos(omega * time)"
+                ),
+                "cloud:velocity_source",
+                "velocity",
+            ),
+            _constant("delta", {"time": -1}, 0.3),
+            _constant("alpha", {"time": -2}, -1),
+            _constant("beta", {"length": -2, "time": -2}, 1),
+            _constant("gamma", {"length": 1, "time": -2}, 0.37),
+            _constant("omega", {"time": -1}, 1.2),
+        ],
+        unit="time",
+        final_time=200,
+        time_step=0.01,
+        saveper=0.05,
+    )
+
+
 _BUILDERS = {
     "exponential_growth": exponential,
     "logistic_growth": logistic,
@@ -375,6 +680,12 @@ _BUILDERS = {
     "workforce": workforce,
     "supply_delay": supply_delay,
     "renewable_resource": renewable_resource,
+    "sirs_epidemic": sirs_epidemic,
+    "supply_chain_bullwhip": supply_chain_bullwhip,
+    "student_club": student_club,
+    "lorenz_system": lorenz_system,
+    "van_der_pol_oscillator": van_der_pol_oscillator,
+    "duffing_oscillator": duffing_oscillator,
 }
 
 _METADATA = {
@@ -417,6 +728,30 @@ _METADATA = {
     "renewable_resource": (
         "Renewable resources and harvesting",
         ("resource", "fish", "forest", "harvest", "renewable", "рыб", "лес", "ресурс"),
+    ),
+    "sirs_epidemic": (
+        "Seasonal SIRS epidemic with waning immunity",
+        ("sirs", "seasonal epidemic", "waning immunity", "seasonal waves", "повторные волны"),
+    ),
+    "supply_chain_bullwhip": (
+        "Supply chain oscillations and bullwhip effect",
+        ("bullwhip", "supply chain", "customer demand", "order amplification", "цепочка поставок"),
+    ),
+    "student_club": (
+        "Student club growth, capacity, burnout and campaigns",
+        ("speaking club", "student club", "student community", "english club", "клуб", "студен"),
+    ),
+    "lorenz_system": (
+        "Lorenz chaotic three-variable attractor",
+        ("lorenz", "лоренц", "chaotic attractor", "butterfly attractor"),
+    ),
+    "van_der_pol_oscillator": (
+        "Van der Pol nonlinear relaxation oscillator",
+        ("van der pol", "ван дер поль", "relaxation oscillator", "предельный цикл"),
+    ),
+    "duffing_oscillator": (
+        "Duffing driven nonlinear oscillator",
+        ("duffing", "даффинг", "two-well oscillator", "двухъямный"),
     ),
 }
 

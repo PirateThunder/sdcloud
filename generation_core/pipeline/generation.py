@@ -1,34 +1,179 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
 from .codegen import export_vensim, generate_python_code
-from .exceptions import ModelValidationError
+from .exceptions import LLMResponseError, ModelValidationError
+from .expression_parser import normalize_expression
 from .formats import export_xmile
 from .io import write_json_atomic, write_stage
+from .ir import dependencies
 from .llm import LLMClient
 from .pattern_library import pattern_prompt, select_pattern
 from .prompts import (
     EQUATION_GENERATION_PROMPT,
     MODEL_BRIEF_PROMPT,
     REPAIR_PROMPT,
+    STAGE_REPAIR_PROMPT,
     VARIABLE_EXTRACTION_PROMPT,
 )
 from .schemas import (
     Assumption,
+    Expression,
     GenerationRequest,
     LookupTable,
     ModelBrief,
     ModelDocument,
     SDVariable,
+    SimulationParameters,
+    TimeSettings,
 )
 from .semantics import with_semantic_validation
+from .simulation import simulate_model
 from .validation import finalize_model
+
+
+def _nullable(schema: dict) -> dict:
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+_EXPRESSION_INPUT_SCHEMA = {
+    "anyOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}]
+}
+_UNITS_SCHEMA = {"type": "object", "additionalProperties": {"type": "integer"}}
+_ENDPOINT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string", "enum": ["stock", "cloud"]},
+        "id": {"type": "string"},
+    },
+    "required": ["kind", "id"],
+    "additionalProperties": False,
+}
+_VARIABLE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string", "enum": ["stock", "flow", "auxiliary", "constant"]},
+        "label": _nullable({"type": "string"}),
+        "description": _nullable({"type": "string"}),
+        "units": _nullable(_UNITS_SCHEMA),
+        "units_raw": _nullable({"type": "string"}),
+        "bounds": _nullable(
+            {
+                "type": "object",
+                "properties": {
+                    "min": _nullable({"type": "number"}),
+                    "max": _nullable({"type": "number"}),
+                    "on_violation": {"type": "string", "enum": ["error", "warn"]},
+                },
+                "required": ["min", "max", "on_violation"],
+                "additionalProperties": False,
+            }
+        ),
+        "subscripts": {"type": "array", "items": {"type": "string"}},
+        "initial": _nullable(_EXPRESSION_INPUT_SCHEMA),
+        "derivative": _nullable(_EXPRESSION_INPUT_SCHEMA),
+        "allow_isolated": {"type": "boolean"},
+        "expression": _nullable(_EXPRESSION_INPUT_SCHEMA),
+        "source": _nullable(_ENDPOINT_SCHEMA),
+        "target": _nullable(_ENDPOINT_SCHEMA),
+        "topology_status": {
+            "type": "string",
+            "enum": ["declared", "inferred", "missing"],
+        },
+        "exogenous": {"type": "boolean"},
+    },
+    "additionalProperties": False,
+}
+_TABLE_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "label": _nullable({"type": "string"}),
+        "points": {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "number"}},
+        },
+        "x_units": _nullable(_UNITS_SCHEMA),
+        "y_units": _nullable(_UNITS_SCHEMA),
+        "interpolation": {"type": "string", "enum": ["linear"]},
+        "extrapolation": {"type": "string", "enum": ["clamp", "linear", "error"]},
+    },
+    "additionalProperties": False,
+}
+_ASSUMPTION_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "value": {"type": "string"},
+        "source": {
+            "type": "string",
+            "enum": ["user", "archetype", "llm_inferred", "imported", "migration"],
+        },
+        "rationale": {"type": "string"},
+        "requires_confirmation": {"type": "boolean"},
+    },
+    "required": ["path", "value", "source", "rationale", "requires_confirmation"],
+    "additionalProperties": False,
+}
+_TIME_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "unit": {"type": "string"},
+        "initial_time": {"type": "number"},
+        "final_time": {"type": "number"},
+        "time_step": {"type": "number", "exclusiveMinimum": 0},
+        "saveper": {"type": "number", "exclusiveMinimum": 0},
+    },
+    "required": ["unit", "initial_time", "final_time", "time_step", "saveper"],
+    "additionalProperties": False,
+}
+_VARIABLES_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "time": _TIME_SCHEMA,
+        "variables": {
+            "type": "array",
+            "items": _VARIABLE_ITEM_SCHEMA,
+            "minItems": 1,
+            "maxItems": 200,
+        },
+        "tables": {"type": "array", "items": _TABLE_ITEM_SCHEMA},
+        "assumptions": {"type": "array", "items": _ASSUMPTION_ITEM_SCHEMA},
+    },
+    "required": ["name", "time", "variables", "tables", "assumptions"],
+    "additionalProperties": False,
+}
+_EQUATIONS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "expressions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "expression": _EXPRESSION_INPUT_SCHEMA,
+                },
+                "required": ["id", "expression"],
+                "additionalProperties": False,
+            },
+            "minItems": 1,
+        }
+    },
+    "required": ["expressions"],
+    "additionalProperties": False,
+}
 
 
 def _save_stage(workdir: Path | None, stage: str, value: Any = None) -> None:
@@ -37,6 +182,75 @@ def _save_stage(workdir: Path | None, stage: str, value: Any = None) -> None:
     write_stage(workdir, stage)
     if value is not None:
         write_json_atomic(workdir / f"{stage}.json", value)
+
+
+@dataclass
+class _RepairBudget:
+    maximum: int
+    attempts: int = 0
+
+    def take(self) -> bool:
+        if self.attempts >= self.maximum:
+            return False
+        self.attempts += 1
+        return True
+
+
+def _json_excerpt(value: Any, limit: int = 12_000) -> str:
+    if isinstance(value, str):
+        return value[:limit]
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)[:limit]
+    except (TypeError, ValueError):
+        return repr(value)[:limit]
+
+
+async def _call_stage[T](
+    llm: LLMClient,
+    *,
+    stage: str,
+    prompt: str,
+    system: str,
+    temperature: float,
+    response_schema: dict,
+    parser: Callable[[Any], T],
+    budget: _RepairBudget,
+    workdir: Path | None,
+) -> T:
+    current_stage = stage
+    current_prompt = prompt
+    previous_response = ""
+    while True:
+        try:
+            response = await llm.chat_json(
+                current_prompt,
+                stage=current_stage,
+                system=system,
+                temperature=temperature,
+                response_schema=response_schema,
+            )
+            previous_response = _json_excerpt(response)
+            return parser(response)
+        except (LLMResponseError, ModelValidationError, ValidationError) as exc:
+            if isinstance(exc, LLMResponseError) and exc.response_text:
+                previous_response = exc.response_text
+            if not budget.take():
+                if isinstance(exc, ValidationError):
+                    raise ModelValidationError(f"invalid {stage}: {exc}") from exc
+                raise
+            repair_stage = f"{stage}_repair_{budget.attempts}"
+            _save_stage(
+                workdir,
+                repair_stage,
+                {"error": str(exc), "response": previous_response},
+            )
+            current_stage = repair_stage
+            current_prompt = STAGE_REPAIR_PROMPT.format(
+                stage=stage,
+                error=str(exc)[:6000],
+                original_prompt=_json_excerpt(prompt, 30_000),
+                response=_json_excerpt(previous_response),
+            )
 
 
 def model_context(document: ModelDocument) -> str:
@@ -90,6 +304,98 @@ def _variables(response: Any) -> tuple[dict, list[dict]]:
     return response, raw
 
 
+def _normalize_assumptions(values: Any) -> Any:
+    if not isinstance(values, list):
+        return values
+    result = []
+    for item in values:
+        if not isinstance(item, dict):
+            result.append(item)
+            continue
+        value = dict(item)
+        if isinstance(value.get("value"), bool | int | float):
+            value["value"] = str(value["value"])
+        result.append(value)
+    return result
+
+
+def _variable_response(response: Any) -> tuple[dict, list[dict]]:
+    metadata, raw = _variables(response)
+    metadata = dict(metadata)
+    normalized = []
+    for item in raw:
+        value = dict(item)
+        kind = value.get("kind")
+        if kind == "stock":
+            if value.get("initial") is None:
+                raise ModelValidationError(
+                    f"missing initial for stock {value.get('id')}: expected a number or formula, not null"
+                )
+            value["initial"] = normalize_expression(value["initial"])
+            if value.get("derivative") is not None:
+                value["derivative"] = normalize_expression(value["derivative"])
+        else:
+            expression = value.get("expression")
+            if expression is None:
+                expression = value.get("initial")
+            if expression is not None:
+                value["expression"] = normalize_expression(expression)
+            else:
+                value.pop("expression", None)
+            value.pop("initial", None)
+        common = {"id", "kind", "label", "description", "units", "units_raw", "bounds", "subscripts"}
+        fields = {
+            "stock": common | {"initial", "derivative", "allow_isolated"},
+            "flow": common | {"expression", "source", "target", "topology_status"},
+            "auxiliary": common | {"expression"},
+            "constant": common | {"expression", "exogenous"},
+        }.get(kind)
+        if fields is None:
+            raise ModelValidationError(f"invalid variable kind: {kind!r}")
+        value = {key: item for key, item in value.items() if key in fields}
+        candidate = dict(value)
+        if kind != "stock":
+            initial = candidate.pop("initial", None)
+            if candidate.get("expression") is None:
+                candidate["expression"] = initial or {"op": "lit", "value": 0}
+        try:
+            TypeAdapter(SDVariable).validate_python(candidate)
+        except ValidationError as exc:
+            raise ModelValidationError(f"invalid variable {value.get('id')}: {exc}") from exc
+        normalized.append(value)
+    ids = {item.get("id") for item in normalized}
+    for item in normalized:
+        for field in ("initial", "derivative", "expression"):
+            if item.get(field) is None:
+                continue
+            expression = TypeAdapter(Expression).validate_python(item[field])
+            unknown = dependencies(expression) - ids
+            if unknown:
+                raise ModelValidationError(
+                    f"variables.{item.get('id')}.{field} references unknown variables: "
+                    f"{sorted(unknown)}"
+                )
+    metadata["variables"] = normalized
+    try:
+        if metadata.get("time") is not None:
+            metadata["time"] = TimeSettings.model_validate(metadata["time"]).model_dump(mode="json")
+        if "tables" in metadata:
+            metadata["tables"] = [
+                item.model_dump(mode="json")
+                for item in TypeAdapter(list[LookupTable]).validate_python(metadata["tables"])
+            ]
+        if "assumptions" in metadata:
+            metadata["assumptions"] = [
+                item.model_dump(mode="json")
+                for item in TypeAdapter(list[Assumption]).validate_python(
+                    _normalize_assumptions(metadata["assumptions"])
+                )
+            ]
+    except ValidationError as exc:
+        raise ModelValidationError(f"invalid generated model metadata: {exc}") from exc
+    return metadata, normalized
+
+
 def _expressions(response: Any) -> dict[str, Any]:
     if isinstance(response, dict) and "expressions" not in response:
         raw = response.get("variables", response)
@@ -114,11 +420,15 @@ def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
     merged = []
     for item in raw:
         value = dict(item)
-        if value.get("kind") != "stock":
+        if value.get("kind") == "stock":
+            value["initial"] = normalize_expression(value["initial"])
+            if value.get("derivative") is not None:
+                value["derivative"] = normalize_expression(value["derivative"])
+        else:
             expression = expressions.get(value.get("id"), value.pop("initial", None))
             if expression is None:
                 raise ModelValidationError(f"missing expression for {value.get('id')}")
-            value["expression"] = expression
+            value["expression"] = normalize_expression(expression)
         try:
             merged.append(TypeAdapter(SDVariable).validate_python(value))
         except ValidationError as exc:
@@ -136,25 +446,16 @@ def _repair(document: ModelDocument, response: Any, attempt: int) -> ModelDocume
     if not isinstance(response, dict) or not isinstance(response.get("variables"), list):
         raise ModelValidationError("repair must return a complete variables list")
     try:
-        raw_variables = []
-        for item in response["variables"]:
-            value = dict(item)
-            if value.get("kind") != "stock":
-                initial = value.pop("initial", None)
-                if "expression" not in value and initial is not None:
-                    value["expression"] = initial
-            raw_variables.append(value)
-        variables = TypeAdapter(list[SDVariable]).validate_python(raw_variables)
-        tables = TypeAdapter(list[LookupTable]).validate_python(response.get("tables", []))
-        assumptions = TypeAdapter(list[Assumption]).validate_python(response.get("assumptions", []))
+        metadata, raw = _variable_response(response)
+        variables = _merge(raw, _expressions({"variables": raw}))
         return ModelDocument(
             id=document.id,
             name=response.get("name") or document.name,
             description=document.description,
             time=response.get("time") or document.time,
             variables=variables,
-            tables=tables,
-            assumptions=assumptions,
+            tables=metadata.get("tables", []),
+            assumptions=metadata.get("assumptions", []),
             provenance=document.provenance,
             brief=document.brief,
             pattern_id=document.pattern_id,
@@ -182,51 +483,65 @@ async def generate_model(
     workdir: Path | None = None,
     max_repairs: int | None = None,
 ) -> ModelDocument:
+    repairs = max_repairs if max_repairs is not None else int(os.environ.get("LLM_MAX_REPAIRS", "3"))
+    budget = _RepairBudget(max(0, min(repairs, 3)))
     description = _description(request)
     pattern = select_pattern(description)
     pattern_text = pattern_prompt(pattern)
     _save_stage(workdir, "brief")
-    response = await llm.chat_json(
-        MODEL_BRIEF_PROMPT.format(description=description, pattern=pattern_text),
+    brief = await _call_stage(
+        llm,
         stage="brief",
+        prompt=MODEL_BRIEF_PROMPT.format(description=description, pattern=pattern_text),
         system="You are a system dynamics expert. Return only JSON.",
         temperature=0.1,
         response_schema=ModelBrief.model_json_schema(),
+        parser=ModelBrief.model_validate,
+        budget=budget,
+        workdir=workdir,
     )
-    try:
-        brief = ModelBrief.model_validate(response)
-    except ValidationError as exc:
-        raise ModelValidationError(f"invalid ModelBrief: {exc}") from exc
     brief_text = brief.model_dump_json(indent=2)
     _save_stage(workdir, "brief", brief.model_dump(mode="json"))
 
     _save_stage(workdir, "variables")
-    response = await llm.chat_json(
-        VARIABLE_EXTRACTION_PROMPT.format(
+    metadata, raw = await _call_stage(
+        llm,
+        stage="variables",
+        prompt=VARIABLE_EXTRACTION_PROMPT.format(
             description=description,
             brief=brief_text,
             pattern=pattern_text,
         ),
-        stage="variables",
         system="You design valid system dynamics structures. Return only JSON.",
         temperature=0.2,
+        response_schema=_VARIABLES_RESPONSE_SCHEMA,
+        parser=_variable_response,
+        budget=budget,
+        workdir=workdir,
     )
-    metadata, raw = _variables(response)
     _save_stage(workdir, "variables", raw)
 
     _save_stage(workdir, "equations")
-    response = await llm.chat_json(
-        EQUATION_GENERATION_PROMPT.format(
+
+    def parse_equations(response: Any) -> tuple[dict[str, Any], list[SDVariable]]:
+        expressions = _expressions(response)
+        return expressions, _merge(raw, expressions)
+
+    expressions, variables = await _call_stage(
+        llm,
+        stage="equations",
+        prompt=EQUATION_GENERATION_PROMPT.format(
             description=description,
             brief=brief_text,
             variables=json.dumps(raw, ensure_ascii=False, indent=2),
         ),
-        stage="equations",
         system="You generate typed system dynamics expressions. Return only JSON.",
         temperature=0.2,
+        response_schema=_EQUATIONS_RESPONSE_SCHEMA,
+        parser=parse_equations,
+        budget=budget,
+        workdir=workdir,
     )
-    expressions = _expressions(response)
-    variables = _merge(raw, expressions)
     _save_stage(workdir, "equations", expressions)
 
     if request.assumption_policy == "require_explicit" and any(
@@ -263,13 +578,8 @@ async def generate_model(
 
     _save_stage(workdir, "validation")
     document, errors = _validated(document)
-    repairs = (
-        max_repairs if max_repairs is not None else int(os.environ.get("LLM_MAX_REPAIRS", "3"))
-    )
-    repairs = max(0, min(repairs, 3))
-    attempt = 0
-    while errors and attempt < repairs:
-        attempt += 1
+    while errors and budget.take():
+        attempt = budget.attempts
         _save_stage(workdir, f"repair_{attempt}", [item.model_dump(mode="json") for item in errors])
         response = await llm.chat_json(
             REPAIR_PROMPT.format(
@@ -283,13 +593,16 @@ async def generate_model(
             stage=f"repair_{attempt}",
             system="You repair system dynamics models using validator errors. Return only JSON.",
             temperature=0.1,
+            response_schema=_VARIABLES_RESPONSE_SCHEMA,
         )
+        _save_stage(workdir, f"repair_{attempt}_response", response)
         document = _repair(document, response, attempt)
         document, errors = _validated(document)
     if errors:
         raise ModelValidationError(
             "; ".join(f"{item.code} at {item.path}: {item.message}" for item in errors[:10])
         )
+    document = document.model_copy(update={"repair_attempts": budget.attempts})
     _save_stage(workdir, "validation", document.validation.model_dump(mode="json"))
     _save_stage(
         workdir,
@@ -298,6 +611,34 @@ async def generate_model(
             "cld": document.cld_data.model_dump(mode="json"),
             "sfd": document.sfd_data.model_dump(mode="json"),
         },
+    )
+
+    _save_stage(workdir, "smoke")
+    try:
+        horizon = document.time.final_time - document.time.initial_time
+        smoke_step = min(document.time.time_step, horizon / 4)
+        smoke = simulate_model(
+            document,
+            SimulationParameters(
+                initial_time=document.time.initial_time,
+                final_time=document.time.initial_time + smoke_step * 4,
+                time_step=smoke_step,
+                saveper=smoke_step,
+                integration_method="euler",
+            ),
+        )
+        if not all(
+            math.isfinite(value) for series in smoke.variables.values() for value in series
+        ):
+            raise ModelValidationError("smoke simulation returned non-finite values")
+    except Exception as exc:
+        raise ModelValidationError(
+            f"generated model smoke simulation failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    _save_stage(
+        workdir,
+        "smoke",
+        {"points": len(smoke.time), "engine": smoke.engine, "method": smoke.integration_method},
     )
 
     _save_stage(workdir, "exports")

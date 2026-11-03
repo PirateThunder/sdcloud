@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pipeline.exceptions import ModelValidationError
-from pipeline.generation import generate_model
+from pipeline.generation import _repair, generate_model
 from pipeline.pattern_library import get_pattern, select_pattern
 from pipeline.schemas import GenerationRequest
 from pipeline.semantics import semantic_issues, with_semantic_validation
@@ -103,6 +103,28 @@ def test_nonstock_initial_is_normalized_to_expression():
     assert variables[0].expression.value == 0.1
 
 
+def test_repair_uses_normalized_constant_initial_values():
+    document = get_pattern("predator_prey").document
+    variables = [item.model_dump(mode="json") for item in document.variables]
+    for item in variables:
+        if item["kind"] == "constant":
+            item["initial"] = item["expression"]["value"]
+            item["expression"] = None
+    repaired = _repair(
+        document,
+        {
+            "name": document.name,
+            "time": document.time.model_dump(mode="json"),
+            "variables": variables,
+            "tables": [],
+            "assumptions": [],
+        },
+        1,
+    )
+    constant = next(item for item in repaired.variables if item.id == "prey_growth")
+    assert constant.expression.value == 0.1
+
+
 async def test_benchmark_offline():
     from pipeline.benchmark import run_benchmark
     from pipeline.llm import FixtureLLM
@@ -115,4 +137,7 @@ async def test_benchmark_offline():
     assert result["cases"] == 1
     assert result["executable_rate"] == 1
     assert result["semantic_rate"] == 1
+    assert result["behavior_rate"] == 1
+    assert result["finite_rate"] == 1
+    assert result["full_horizon_rate"] == 1
     assert result["results"][0]["repair_attempts"] == 0

@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4 реализованы; полный benchmark 20×3 не запускался  
+**Статус:** этапы 0–4 и reliability/local-LLM hardening 0.2.0 реализованы; полный benchmark 26×3 не запускался
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -161,8 +161,8 @@ Lookup имеет отдельную форму с именем зарегист
 - Только whitelisted operators/functions и явное число аргументов.
 - Все literal values конечны; booleans допускаются только в условиях.
 - Нет imports, attribute access, lambda, comprehensions, assignment, dynamic indexing или arbitrary calls.
-- Parser текстовых уравнений нужен для Vensim/migration; новый LLM output использует JSON AST.
-- Начальные ограничения: expression ≤ 4000 исходных символов, ≤ 500 AST nodes, глубина ≤ 50.
+- LLM может вернуть безопасную DSL-формулу, число, canonical JSON AST или AST-подобную строку; `pipeline/expression_parser.py` нормализует их без `eval`. Внутри и при хранении используется только typed AST.
+- Начальные ограничения: expression ≤ 10000 исходных символов, ≤ 500 AST nodes, глубина ≤ 50.
 - Нормализация сохраняет эквивалентность и не выполняет агрессивные символические упрощения, меняющие пограничную семантику.
 
 ### 5.5 Единицы и время
@@ -451,28 +451,29 @@ Idempotency import включает hash содержимого файла и op
 
 ### 10.2 Structured output и repair
 
-- Использовать provider JSON Schema/structured output, если выбранная модель это поддерживает; Pydantic validation обязателен в любом случае.
-- Plain JSON parser остаётся fallback, но не считается доказательством schema validity.
-- Repair получает текущий fragment и structured errors, но не неограниченную историю чата.
-- Не более 2 попыток на стадию и не более 3 semantic repairs на весь run; лимиты конфигурируются и попадают в manifest.
+- Strict JSON Schema применяется на brief, variables, equations, chat и repair; Pydantic validation обязателен независимо от provider.
+- Unstructured fallback не выполняется молча: доступен только через явный `*_ALLOW_UNSTRUCTURED_FALLBACK=1`.
+- Repair получает текущий fragment и structured errors. Общий bounded budget по умолчанию — 3 попытки на run и покрывает malformed JSON, ранние schema/reference errors и semantic repairs.
+- Unknown references в stock initial и expression IDs проверяются на variables/equations стадиях до полной сборки документа.
 - Нет автоматического paid retry после окончательной semantic failure.
 - Repair не может молча удалить ошибочный stock/flow, изменить units ради прохождения или заменить неизвестную функцию нулём.
-- После repair обязательна полная повторная validation.
+- После repair обязательны полная повторная validation и smoke-симуляция готовой модели; repair-ответы сохраняются в workdir.
 
 ### 10.3 Pattern library
 
-Встроенная versioned библиотека в core, не в продуктовой БД:
+Встроенная versioned библиотека из 16 archetypes в core, не в продуктовой БД:
 
 - exponential and logistic growth;
 - teacup cooling;
-- SIR и SEIR;
+- SIR и seasonal SIRS;
 - predator–prey с явной conversion efficiency;
 - Bass diffusion;
 - inventory и backlog;
 - workforce/aging chain;
-- supply chain с delay;
+- supply chain delay и supply chain bullwhip;
 - renewable resource;
-- Rössler для численного, а не обязательного LLM-примера.
+- student club с capacity, burnout и campaigns;
+- Lorenz, Van der Pol и Duffing.
 
 Каждый pattern содержит description, tags, canonical IR, units, topology, assumptions, expected qualitative behavior и numerical fixture. Подбор первой версии — deterministic по tags/keywords; embeddings добавляются только при измеримом выигрыше.
 
@@ -481,7 +482,8 @@ Idempotency import включает hash содержимого файла и op
 ### 10.4 Оценка качества
 
 - Offline fixtures не выполняют сеть и полностью воспроизводимы.
-- Отдельный benchmark: не менее 20 описаний, 3 запуска на описание с фиксированными provider settings.
+- Отдельный benchmark: 26 описаний, 3 запуска на описание с фиксированными provider settings, симуляция полного горизонта.
+- Behavior-oracles для repeated waves, bullwhip, campaign wave, chaotic sign changes, limit cycle и two-well switching дополняют finite/dynamic checks.
 - Метрики: executable rate, semantic pass, units pass, topology pass, graph consistency, assumptions visibility, repair rate, latency, tokens/cost.
 - Semantic pass оценивается по essential stocks/flows/topology/units и ожидаемому поведению, а не совпадению имён с единственным эталоном.
 - Начальные release targets: executable ≥ 90%, semantic ≥ 85%, explicit assumptions = 100%, graph consistency = 100% среди принятых моделей. Это цели новой оценки, не утверждение о текущем качестве.
@@ -705,11 +707,20 @@ uv run ruff check .
 
 ## 19. Состояние реализации
 
-- Реализованы этапы 0–4: ModelDocument 2.0, scientific hardening, SD language, Vensim/XMILE interoperability, ModelBrief, 10 validated patterns, bounded repair, subscripts, external series, scenarios, sensitivity analysis и calibration.
-- Offline suite: 54 passed; Ruff: All checks passed.
+- Реализованы этапы 0–4 и hardening 0.2.0: ModelDocument 2.0, scientific hardening, SD language, Vensim/XMILE interoperability, ModelBrief, 16 validated patterns, DSL normalization, strict output, ранний bounded repair, subscripts, external series, scenarios, sensitivity analysis и calibration.
+- Offline suite: 96 passed; Ruff: All checks passed.
 - Docker E2E подтверждён для generation/simulation/import, scenarios, sensitivity, calibration, subscripts и external series.
-- Live OpenRouter benchmark выполнен на трёх типах моделей: predator–prey, SIR и teacup; результат после нормализации и bounded repair — 3/3 executable и 3/3 semantic. Это ограниченная выборка, а не доказательство качества на всём corpus.
-- Полный benchmark 20 описаний × 3 запуска не выполнялся; runner и corpus доступны в `benchmark.py` и `pipeline/benchmark_prompts.json`.
+- Live OpenRouter baseline predator–prey на финальном коде: 0 repairs, 10 variables, 41 simulation point, все значения конечные. Live SIRS с остаточным `R₀ < 1` после bounded repairs был отклонён semantic validation; это не засчитывается как успешная генерация.
+- Полный benchmark 26 описаний × 3 запуска не выполнялся; runner и corpus доступны в `benchmark.py` и `pipeline/benchmark_prompts.json`.
 - Subscripts поддерживаются в canonical IR и PySD/Vensim, включая 1D/2D arrays, indexed references и aggregation. SciPy для subscripts отклоняется capability error.
 - Subscripted XMILE export и subscripted import не заявлены как поддерживаемые и возвращают явный unsupported error; базовые scalar Vensim/XMILE round-trips работают.
-- Backend не создавался; backend gate для контракта 2.0 выполнен.
+- Backend и frontend реализованы; границы модулей сохранены.
+
+## 20. Локальный inference 0.2.0
+
+- `pipeline/llm.py` поддерживает `openrouter`, `fixture` и `local`/`vllm`/`openai_compatible` через OpenAI-compatible `/chat/completions`.
+- Local provider требует `LOCAL_LLM_MODEL`, использует `LOCAL_LLM_BASE_URL` и не требует API key. Таймаут, max tokens, structured output и явный unstructured fallback настраиваются через `LOCAL_LLM_*`.
+- `docker-compose.local-llm.yml` добавляет vLLM и направляет gen-api/gen-worker только на него. По умолчанию используется `QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, max model len 16384 и GPU memory utilization 0.92.
+- Целевое окружение — NVIDIA GPU с 24 GB VRAM и NVIDIA Container Toolkit. Для другого OpenAI-compatible сервера отдельный vLLM container не обязателен.
+- Первая загрузка весов требует сети или подготовленного Hugging Face cache; после загрузки внешние LLM API не используются и облачный fallback отсутствует.
+- В текущем окружении реальный 30B-инференс не запускался. Требуемые проверки на целевом GPU: `/v1/models`, CLI generate/simulate, REST job и benchmark 26×3 с замерами executable/semantic/behavior rates, latency и VRAM.

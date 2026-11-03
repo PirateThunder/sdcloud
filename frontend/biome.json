@@ -11,7 +11,8 @@
       "!build",
       "!e2e/screenshots",
       "!test-results",
-      "!playwright-report"
+      "!playwright-report",
+      "!next-env.d.ts"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },

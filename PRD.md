@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core, backend и frontend реализованы и проверены; production release не выполнен; полный benchmark core 20×3 не запускался  
+**Статус:** generation_core 0.2.0, backend и frontend реализованы и проверены; production release не выполнен; полный benchmark core 26×3 не запускался
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -478,7 +478,17 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
 - Если production данных нет, шаг миграции данных пропускается после подтверждения, а не выполняется искусственно.
 - Точные лимиты, TTL и concurrency являются начальными настройками и уточняются замерами, но должны быть configurable с первой версии.
 
-## 14. Источники анализа
+## 14. Reliability и локальный inference 0.2.0
+
+- generation_core принимает от LLM безопасные DSL-формулы, числа и AST-подобные строки; canonical typed AST остаётся внутренним и хранимым контрактом, поэтому backend и frontend не меняются.
+- Strict JSON Schema применяется на всех LLM-стадиях. Общий bounded repair budget покрывает malformed JSON, schema/reference errors и semantic failures; неуспешный structured output не отключается молча.
+- Готовая модель проходит smoke-симуляцию. SIRS дополнительно проверяется на infection/immunity-loss topology, сезонность и возможность роста; behavior benchmark выполняет полный горизонт.
+- Pattern library содержит 16 archetypes, benchmark corpus — 26 описаний с поведенческими oracles для шести новых моделей.
+- Добавлен `local`/`vllm` OpenAI-compatible provider и optional `generation_core/docker-compose.local-llm.yml` для 30B-A3B AWQ на NVIDIA GPU. Backend по-прежнему вызывает только gen-api; локальный inference не требует изменения продуктовых контрактов.
+- Первая загрузка весов использует сеть или подготовленный cache, после неё внешние LLM API не нужны. Облачный fallback в local-режиме отсутствует.
+- Проверки 0.2.0: 96 core tests, Ruff, fixture CLI/benchmark, шесть behavior-oracles и live OpenRouter predator-prey. Полный benchmark 26×3 и реальный 30B-инференс ещё не выполнены; live SIRS с остаточным `R₀ < 1` был отклонён fail-closed.
+
+## 15. Источники анализа
 
 - Старая предметная логика: `../sdcloud_old/code/backend/app/services/generation`, `services/graph`, `services/simulation`, `utils`.
 - Старые пользовательские контракты: `../sdcloud_old/code/SPEC.md`, `backend/app/api/v1/endpoints`, `frontend/src/fsd`.

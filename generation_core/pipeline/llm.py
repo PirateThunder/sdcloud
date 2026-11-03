@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from .exceptions import LLMError
+from .exceptions import LLMError, LLMResponseError
 
 
 class LLMClient(Protocol):
@@ -39,26 +39,62 @@ def parse_json_response(text: str) -> Any:
                     return json.loads(match.group(1))
                 except json.JSONDecodeError:
                     continue
-        raise LLMError(f"failed to parse LLM JSON: {original}") from original
+        raise LLMResponseError(
+            f"failed to parse LLM JSON: {original}", response_text=stripped[:6000]
+        ) from original
 
 
-class OpenRouterLLM:
+def _flag(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def strict_json_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [strict_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {
+        key: strict_json_schema(item)
+        for key, item in value.items()
+        if key != "default"
+    }
+    properties = result.get("properties")
+    if isinstance(properties, dict):
+        result["required"] = list(properties)
+    return result
+
+
+class OpenAICompatibleLLM:
     def __init__(
         self,
-        api_key: str,
         model: str,
         *,
-        base_url: str = "https://openrouter.ai/api/v1",
+        base_url: str,
+        api_key: str | None = None,
         timeout: float = 120.0,
         proxy: str | None = None,
+        provider_name: str = "OpenAI-compatible",
+        structured_output: bool = True,
+        allow_unstructured_fallback: bool = False,
+        max_tokens: int = 8192,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
+        self.provider_name = provider_name
+        self.structured_output = structured_output
+        self.allow_unstructured_fallback = allow_unstructured_fallback
+        self.max_tokens = max_tokens
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = httpx.AsyncClient(
             base_url=base_url,
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers=headers,
             timeout=timeout,
             proxy=proxy,
             trust_env=False,
+            transport=transport,
         )
 
     async def chat_json(
@@ -78,32 +114,74 @@ class OpenRouterLLM:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "max_tokens": self.max_tokens,
         }
-        if response_schema is not None:
+        if response_schema is not None and self.structured_output:
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "sdcloud_response",
                     "strict": True,
-                    "schema": response_schema,
+                    "schema": strict_json_schema(response_schema),
                 },
             }
         try:
             response = await self._client.post("/chat/completions", json=payload)
-            if response.is_error and response_schema is not None:
+            if (
+                response.is_error
+                and response_schema is not None
+                and self.allow_unstructured_fallback
+            ):
                 payload.pop("response_format", None)
                 response = await self._client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-            body = response.json()
+            if response.is_error:
+                raise LLMError(
+                    f"{self.provider_name} HTTP {response.status_code} at stage {stage}: "
+                    f"{response.text[:1000]}"
+                )
+            try:
+                body = response.json()
+            except ValueError as exc:
+                raise LLMResponseError(
+                    f"{self.provider_name} returned invalid response JSON at stage {stage}",
+                    response_text=response.text[:6000],
+                ) from exc
             content = body["choices"][0]["message"]["content"]
             if not isinstance(content, str):
-                raise LLMError(f"OpenRouter returned non-text content at stage {stage}")
+                raise LLMError(f"{self.provider_name} returned non-text content at stage {stage}")
             return parse_json_response(content)
+        except LLMError:
+            raise
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise LLMError(f"OpenRouter request failed at stage {stage}: {exc}") from exc
+            raise LLMError(f"{self.provider_name} request failed at stage {stage}: {exc}") from exc
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class OpenRouterLLM(OpenAICompatibleLLM):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        *,
+        base_url: str = "https://openrouter.ai/api/v1",
+        timeout: float = 120.0,
+        proxy: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            timeout=timeout,
+            proxy=proxy,
+            provider_name="OpenRouter",
+            structured_output=_flag("LLM_STRUCTURED_OUTPUT", True),
+            allow_unstructured_fallback=_flag("LLM_ALLOW_UNSTRUCTURED_FALLBACK", False),
+            max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "8192")),
+            transport=transport,
+        )
 
 
 class FixtureLLM:
@@ -141,6 +219,20 @@ def create_llm(provider: str, fixture_path: Path | None = None) -> LLMClient:
         if fixture_path is None:
             raise LLMError("fixture provider requires --fixture or LLM_FIXTURE_PATH")
         return FixtureLLM(fixture_path)
+    if provider in {"local", "vllm", "openai_compatible"}:
+        model = os.environ.get("LOCAL_LLM_MODEL")
+        if not model:
+            raise LLMError("LOCAL_LLM_MODEL is required for the local provider")
+        return OpenAICompatibleLLM(
+            model=model,
+            base_url=os.environ.get("LOCAL_LLM_BASE_URL", "http://127.0.0.1:8000/v1"),
+            api_key=os.environ.get("LOCAL_LLM_API_KEY") or None,
+            timeout=float(os.environ.get("LOCAL_LLM_TIMEOUT", "300")),
+            provider_name="Local LLM",
+            structured_output=_flag("LOCAL_LLM_STRUCTURED_OUTPUT", True),
+            allow_unstructured_fallback=_flag("LOCAL_LLM_ALLOW_UNSTRUCTURED_FALLBACK", False),
+            max_tokens=int(os.environ.get("LOCAL_LLM_MAX_TOKENS", "8192")),
+        )
     if provider != "openrouter":
         raise LLMError(f"unknown LLM provider: {provider}")
     api_key = os.environ.get("OPENROUTER_API_KEY")

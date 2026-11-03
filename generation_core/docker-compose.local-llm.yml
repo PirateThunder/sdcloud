@@ -1,0 +1,51 @@
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    command: >
+      --model ${VLLM_MODEL:-QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ}
+      --max-model-len ${VLLM_MAX_LEN:-16384}
+      --gpu-memory-utilization ${VLLM_GPU_MEM:-0.92}
+    volumes:
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      - "127.0.0.1:${VLLM_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=5)
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 180s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  gen-api:
+    environment:
+      LLM_PROVIDER: local
+      LOCAL_LLM_BASE_URL: http://vllm:8000/v1
+      LOCAL_LLM_MODEL: ${VLLM_MODEL:-QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ}
+      LOCAL_LLM_STRUCTURED_OUTPUT: "1"
+      LOCAL_LLM_MAX_TOKENS: ${LOCAL_LLM_MAX_TOKENS:-8192}
+    depends_on:
+      vllm:
+        condition: service_healthy
+
+  gen-worker:
+    environment:
+      LLM_PROVIDER: local
+      LOCAL_LLM_BASE_URL: http://vllm:8000/v1
+      LOCAL_LLM_MODEL: ${VLLM_MODEL:-QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ}
+      LOCAL_LLM_STRUCTURED_OUTPUT: "1"
+      LOCAL_LLM_MAX_TOKENS: ${LOCAL_LLM_MAX_TOKENS:-8192}
+    depends_on:
+      vllm:
+        condition: service_healthy

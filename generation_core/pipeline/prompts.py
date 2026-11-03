@@ -52,7 +52,11 @@ ModelBrief:
 - kind: stock, flow, auxiliary, constant.
 - id: ASCII snake_case; label человекочитаемый.
 - units: base unit -> integer exponent; {{}} для dimensionless. Для flow: stock units / time unit.
-- Для каждого stock укажи initial typed AST; ноль разрешён.
+- Для каждого stock укажи initial как число или DSL-формулу, например 1000 или
+  "total_population - initial_infectious". initial=null для stock ЗАПРЕЩЁН; ноль разрешён.
+- Для non-stock initial и expression на этой стадии ставь null.
+- Для неприменимых derivative/source/target/bounds/units_raw ставь null;
+  subscripts=[], allow_isolated=false, topology_status="declared", exogenous=false.
 - Для каждого flow укажи source и target: stock или cloud, хотя бы один endpoint — stock.
 - death/mortality/outflow: source=stock, target=cloud или другой stock. Birth/inflow: target=stock. Не направляй смерть из cloud в stock.
 - Predator-prey обязательно содержит predation, зависящий от обеих популяций, и приток хищников, зависящий от predation или добычи.
@@ -73,15 +77,22 @@ ModelBrief:
 Структура:
 {variables}
 
-Верни ТОЛЬКО JSON-объект:
+Верни ТОЛЬКО JSON-объект. Предпочитай короткие формулы DSL и числа:
 {{
-  "expressions": {{
-    "births": {{"op": "mul", "args": [{{"op": "ref", "name": "population"}}, {{"op": "ref", "name": "birth_rate"}}]}},
-    "birth_rate": {{"op": "lit", "value": 0.02}}
-  }}
+  "expressions": [
+    {{"id": "births", "expression": "population * birth_rate"}},
+    {{"id": "birth_rate", "expression": 0.02}},
+    {{"id": "seasonal_input", "expression": "sin(2 * pi * time / period)"}},
+    {{"id": "demand", "expression": "if_then_else(time >= 10, high_demand, base_demand)"}}
+  ]
 }}
 
-Typed AST:
+DSL поддерживает числа, true/false, pi, e, time, variable ids, скобки,
+унарные +/-/not, операции + - * / % ^, сравнения, and/or и вызовы функций.
+Для lookup используй lookup(table_id, expression). Это не Python: атрибуты,
+imports, lambda, индексы, присваивания и произвольные функции запрещены.
+
+Вместо DSL можно вернуть canonical typed AST:
 - {{"op": "lit", "value": 0.1}}
 - {{"op": "ref", "name": "population"}}
 - {{"op": "time"}}
@@ -108,6 +119,26 @@ step, pulse, pulse_train, ramp, delay1, delay3, smooth, smooth3, initial.
 - Нулевые values допустимы. Не используй Python, imports, lambda или произвольные функции.
 """
 
+STAGE_REPAIR_PROMPT = """\
+Ответ стадии {stage} не прошёл проверку. Исправь ответ, а не начинай другую модель.
+
+Ошибка:
+{error}
+
+Исходное задание стадии:
+{original_prompt}
+
+Предыдущий ответ:
+{response}
+
+Верни ТОЛЬКО исправленный JSON для той же стадии и в том же формате.
+Сохрани корректные переменные, ids, topology, units и ModelBrief. Не добавляй
+произвольный код или новые сущности без необходимости. Для equations используй
+только существующие variable ids; разрешены DSL-формулы из исходного задания
+или canonical typed AST. Не повторяй malformed JSON, op с именем функции вместо
+op="call", числовые assumption.value или expressions для несуществующих ids.
+"""
+
 REPAIR_PROMPT = """\
 Исправь системно-динамическую модель по структурированным ошибкам валидатора.
 
@@ -132,7 +163,9 @@ ModelBrief:
   "assumptions": []
 }}
 
-Каждый stock содержит initial typed AST. Каждая flow/auxiliary/constant содержит expression typed AST. Каждая flow содержит source/target и units. Не используй производную stock: она вычисляется из topology.
+Каждый stock содержит initial, каждая flow/auxiliary/constant содержит expression.
+Для initial/expression разрешены DSL-формулы, числа или canonical typed AST.
+Каждая flow содержит source/target и units. Не используй производную stock: она вычисляется из topology.
 
 Исправь именно указанные ошибки, сохрани корректные части и ModelBrief. Не удаляй predation и другие существенные процессы только ради прохождения валидации. Death/outflow исходит из stock, birth/inflow направлен в stock. Не назначай произвольные ненулевые коэффициенты. Не добавляй Python или другие поля.
 """
