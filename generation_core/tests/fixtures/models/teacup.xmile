@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xmile version="1.0" xmlns="http://docs.oasis-open.org/xmile/ns/XMILE/v1.0">
+  <header><name>Teacup</name></header>
+  <sim_specs method="Euler" time_units="Minutes"><start>0</start><stop>30</stop><dt>0.125</dt></sim_specs>
+  <model><variables>
+    <flow name="Heat Loss to Room"><eqn>("Teacup Temperature"-"Room Temperature")/"Characteristic Time"</eqn><units>Degrees Fahrenheit/Minute</units></flow>
+    <aux name="Room Temperature"><eqn>70</eqn><units>Degrees Fahrenheit</units></aux>
+    <stock name="Teacup Temperature"><outflow>"Heat Loss to Room"</outflow><eqn>180</eqn><units>Degrees Fahrenheit</units></stock>
+    <aux name="Characteristic Time"><eqn>10</eqn><units>Minutes</units></aux>
+  </variables></model>
+</xmile>

@@ -1,0 +1,7 @@
+{
+  "time_start": 0.0,
+  "time_end": 10.0,
+  "time_step": 0.25,
+  "custom_params": {},
+  "integration_method": "rk45"
+}

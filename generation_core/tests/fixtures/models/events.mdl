@@ -1,0 +1,32 @@
+{UTF-8}
+Test Pulse=
+    PULSE(3, 2)
+    ~
+    ~ |
+Test Ramp=
+    RAMP(1, 14, 17)
+    ~
+    ~ |
+Test Step=
+    STEP(1, 1)
+    ~
+    ~ |
+Conditional Input=
+    IF THEN ELSE(Time >= 10, Test Ramp, Test Pulse + Test Step)
+    ~
+    ~ |
+StockA= INTEG(Conditional Input, 0)
+    ~
+    ~ |
+FINAL TIME = 25
+    ~ Month
+    ~ |
+INITIAL TIME = 0
+    ~ Month
+    ~ |
+SAVEPER = TIME STEP
+    ~ Month
+    ~ |
+TIME STEP = 0.0625
+    ~ Month
+    ~ |

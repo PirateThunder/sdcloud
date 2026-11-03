@@ -1,0 +1,65 @@
+{
+  "brief": {
+    "goal": "Модель взаимодействия кроликов и лис",
+    "boundaries": ["Две популяции и их взаимодействие"],
+    "time_horizon": "100 лет",
+    "time_unit": "year",
+    "aggregation": "medium",
+    "stocks": ["Кролики", "Лисы"],
+    "flows": ["Рождаемость кроликов", "Хищничество", "Прирост лис", "Смертность лис"],
+    "exogenous_inputs": ["Коэффициенты рождаемости, хищничества, конверсии и смертности"],
+    "expected_feedback_loops": ["Динамика хищник-жертва"]
+  },
+  "variables": {
+    "name": "Predator prey",
+    "time": {"unit": "year", "initial_time": 0, "final_time": 100, "time_step": 0.25, "saveper": 0.25},
+    "tables": [],
+    "assumptions": [],
+    "variables": [
+      {"id": "prey", "kind": "stock", "label": "prey", "initial": {"op": "lit", "value": 100}, "units": {"rabbit": 1}},
+      {"id": "predators", "kind": "stock", "label": "predators", "initial": {"op": "lit", "value": 20}, "units": {"fox": 1}},
+      {"id": "prey_births", "kind": "flow", "label": "prey_births", "units": {"rabbit": 1, "year": -1}, "source": {"kind": "cloud", "id": "source_prey_births"}, "target": {"kind": "stock", "id": "prey"}},
+      {"id": "predation", "kind": "flow", "label": "predation", "units": {"rabbit": 1, "year": -1}, "source": {"kind": "stock", "id": "prey"}, "target": {"kind": "cloud", "id": "sink_predation"}},
+      {"id": "predator_births", "kind": "flow", "label": "predator_births", "units": {"fox": 1, "year": -1}, "source": {"kind": "cloud", "id": "source_predator_births"}, "target": {"kind": "stock", "id": "predators"}},
+      {"id": "predator_deaths", "kind": "flow", "label": "predator_deaths", "units": {"fox": 1, "year": -1}, "source": {"kind": "stock", "id": "predators"}, "target": {"kind": "cloud", "id": "sink_predator_deaths"}},
+      {"id": "prey_growth", "kind": "constant", "label": "prey_growth", "units": {"year": -1}},
+      {"id": "predation_rate", "kind": "constant", "label": "predation_rate", "units": {"fox": -1, "year": -1}},
+      {"id": "conversion_efficiency", "kind": "constant", "label": "conversion_efficiency", "units": {"fox": 1, "rabbit": -1}},
+      {"id": "predator_mortality", "kind": "constant", "label": "predator_mortality", "units": {"year": -1}}
+    ]
+  },
+  "equations": {
+    "expressions": {
+      "prey_births": {"op": "mul", "args": [{"op": "ref", "name": "prey"}, {"op": "ref", "name": "prey_growth"}]},
+      "predation": {"op": "mul", "args": [{"op": "mul", "args": [{"op": "ref", "name": "prey"}, {"op": "ref", "name": "predators"}]}, {"op": "ref", "name": "predation_rate"}]},
+      "predator_births": {"op": "mul", "args": [{"op": "ref", "name": "predation"}, {"op": "ref", "name": "conversion_efficiency"}]},
+      "predator_deaths": {"op": "mul", "args": [{"op": "ref", "name": "predators"}, {"op": "ref", "name": "predator_mortality"}]},
+      "prey_growth": {"op": "lit", "value": 0.1},
+      "predation_rate": {"op": "lit", "value": 0.02},
+      "conversion_efficiency": {"op": "lit", "value": 0.1},
+      "predator_mortality": {"op": "lit", "value": 0.1}
+    }
+  },
+  "message": [
+    {
+      "contains": "Set prey growth to 0.2",
+      "response": {
+        "action": "update",
+        "assistant_text": "The prey growth rate was updated to 0.2 per year."
+      }
+    },
+    {
+      "contains": "What is the prey growth rate?",
+      "response": {
+        "action": "answer",
+        "assistant_text": "The prey growth rate is **0.1 per year**. This answer uses the current model; no new version was created."
+      }
+    },
+    {
+      "response": {
+        "action": "generate",
+        "assistant_text": "The system dynamics model is ready."
+      }
+    }
+  ]
+}

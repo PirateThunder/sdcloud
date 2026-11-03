@@ -1,0 +1,102 @@
+name: sdcloud-generation
+
+x-generation-env: &generation-env
+  SERV_DATABASE_URL: postgresql+asyncpg://gen:${GEN_DB_PASSWORD:?set GEN_DB_PASSWORD}@gen-db:5432/gen
+  SERV_REDIS_URL: redis://gen-redis:6379/0
+  SERV_API_KEY: ${SERV_API_KEY:-}
+  SERV_JOB_TIMEOUT: ${SERV_JOB_TIMEOUT:-600}
+  SERV_SIMULATION_TIMEOUT: ${SERV_SIMULATION_TIMEOUT:-60}
+  SERV_IMPORT_TIMEOUT: ${SERV_IMPORT_TIMEOUT:-60}
+  SERV_STALE_GRACE_SECONDS: ${SERV_STALE_GRACE_SECONDS:-30}
+  SERV_WATCHDOG_INTERVAL: ${SERV_WATCHDOG_INTERVAL:-30}
+  SERV_WORKER_CONCURRENCY: ${SERV_WORKER_CONCURRENCY:-2}
+  SERV_JOB_MEMORY_MB: ${SERV_JOB_MEMORY_MB:-1024}
+  SERV_JOB_MAX_FILE_MB: ${SERV_JOB_MAX_FILE_MB:-64}
+  SERV_JOB_MAX_FILES: ${SERV_JOB_MAX_FILES:-128}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+  OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+  LLM_FIXTURE_PATH: ${LLM_FIXTURE_PATH:-}
+  PROXY_URL: ${PROXY_URL:-}
+  UV_CACHE_DIR: /tmp/uv-cache
+
+x-secure-service: &secure-service
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=256m
+
+services:
+  gen-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: gen
+      POSTGRES_PASSWORD: ${GEN_DB_PASSWORD:?set GEN_DB_PASSWORD}
+      POSTGRES_DB: gen
+    volumes:
+      - gen_pg:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  gen-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  gen-migrate:
+    build: .
+    command: uv run --frozen --no-dev alembic upgrade head
+    environment:
+      SERV_DATABASE_URL: postgresql+asyncpg://gen:${GEN_DB_PASSWORD:?set GEN_DB_PASSWORD}@gen-db:5432/gen
+    depends_on:
+      gen-db:
+        condition: service_started
+
+  gen-api:
+    build: .
+    command: uv run --frozen --no-dev uvicorn service.main:app --host 0.0.0.0 --port 58312
+    environment: *generation-env
+    volumes:
+      - gen_work:/app/work_api
+    ports:
+      - "127.0.0.1:58312:58312"
+    depends_on:
+      gen-migrate:
+        condition: service_completed_successfully
+      gen-redis:
+        condition: service_started
+    restart: unless-stopped
+    <<: *secure-service
+
+  gen-worker:
+    build: .
+    command: uv run --frozen --no-dev taskiq worker service.broker:broker service.jobs.tasks --max-async-tasks ${SERV_WORKER_CONCURRENCY:-2} --workers 1
+    environment: *generation-env
+    volumes:
+      - gen_work:/app/work_api
+    depends_on:
+      gen-migrate:
+        condition: service_completed_successfully
+      gen-redis:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 1.5
+    pids_limit: 128
+    <<: *secure-service
+
+  gen-watchdog:
+    build: .
+    command: uv run --frozen --no-dev python watchdog.py
+    environment: *generation-env
+    depends_on:
+      gen-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    <<: *secure-service
+
+volumes:
+  gen_pg:
+  gen_work:

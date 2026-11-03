@@ -1,0 +1,155 @@
+name: sdcloud
+
+include:
+  - path: generation_core/docker-compose.yml
+
+x-backend-env: &backend-env
+  BACK_DATABASE_URL: postgresql+asyncpg://back:${BACK_DB_PASSWORD:?set BACK_DB_PASSWORD}@back-db:5432/back
+  BACK_REDIS_URL: redis://back-redis:6379/0
+  BACK_GENERATOR_URL: http://gen-api:58312
+  BACK_GENERATOR_API_KEY: ${SERV_API_KEY:-}
+  BACK_ENV: ${BACK_ENV:-local}
+  BACK_JWT_SECRET: ${BACK_JWT_SECRET:-sdcloud-local-jwt-secret-change-me}
+  BACK_OTP_SECRET: ${BACK_OTP_SECRET:-sdcloud-local-otp-secret-change-me}
+  BACK_EMAIL_DEV_CODE: ${BACK_EMAIL_DEV_CODE:-1}
+  BACK_CORS_ORIGINS: ${BACK_CORS_ORIGINS:-http://localhost:3000,http://localhost:56556,http://127.0.0.1:56556}
+  BACK_TRUST_PROXY_HEADERS: ${BACK_TRUST_PROXY_HEADERS:-0}
+  BACK_SMTP_HOST: ${BACK_SMTP_HOST:-}
+  BACK_SMTP_PORT: ${BACK_SMTP_PORT:-465}
+  BACK_SMTP_USER: ${BACK_SMTP_USER:-}
+  BACK_SMTP_PASSWORD: ${BACK_SMTP_PASSWORD:-}
+  BACK_SMTP_FROM: ${BACK_SMTP_FROM:-}
+  BACK_POLL_INTERVAL_SECONDS: ${BACK_POLL_INTERVAL_SECONDS:-2}
+  UV_CACHE_DIR: /tmp/uv-cache
+
+x-backend-secure: &backend-secure
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=256m
+
+services:
+  gen-api:
+    environment:
+      LLM_FIXTURE_PATH: ${LLM_FIXTURE_PATH:-/app/fixtures/llm_responses.json}
+    volumes:
+      - ./generation_core/tests/fixtures/llm_responses.json:/app/fixtures/llm_responses.json:ro
+
+  gen-worker:
+    environment:
+      LLM_FIXTURE_PATH: ${LLM_FIXTURE_PATH:-/app/fixtures/llm_responses.json}
+    volumes:
+      - ./generation_core/tests/fixtures/llm_responses.json:/app/fixtures/llm_responses.json:ro
+
+  back-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: back
+      POSTGRES_PASSWORD: ${BACK_DB_PASSWORD:?set BACK_DB_PASSWORD}
+      POSTGRES_DB: back
+    volumes:
+      - back_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U back -d back"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+
+  back-redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - back_redis:/data
+    restart: unless-stopped
+
+  back-migrate:
+    build: ./backend
+    command: uv run --frozen --no-dev alembic upgrade head
+    environment:
+      BACK_DATABASE_URL: postgresql+asyncpg://back:${BACK_DB_PASSWORD:?set BACK_DB_PASSWORD}@back-db:5432/back
+      UV_CACHE_DIR: /tmp/uv-cache
+    depends_on:
+      back-db:
+        condition: service_healthy
+    <<: *backend-secure
+
+  back-api:
+    build: ./backend
+    command: uv run --frozen --no-dev uvicorn app.main:app --host 0.0.0.0 --port 61230
+    environment: *backend-env
+    ports:
+      - "127.0.0.1:${BACK_HOST_PORT:-61231}:61230"
+    depends_on:
+      back-migrate:
+        condition: service_completed_successfully
+      back-redis:
+        condition: service_started
+      gen-api:
+        condition: service_started
+    restart: unless-stopped
+    <<: *backend-secure
+
+  back-worker:
+    build: ./backend
+    command: uv run --frozen --no-dev taskiq worker app.broker:broker app.generations.tasks app.simulations.tasks --max-async-tasks 4 --workers 1
+    environment: *backend-env
+    depends_on:
+      back-migrate:
+        condition: service_completed_successfully
+      back-redis:
+        condition: service_started
+      gen-api:
+        condition: service_started
+    restart: unless-stopped
+    <<: *backend-secure
+
+  back-watchdog:
+    build: ./backend
+    command: uv run --frozen --no-dev python -m app.watchdog
+    environment: *backend-env
+    depends_on:
+      back-migrate:
+        condition: service_completed_successfully
+      back-redis:
+        condition: service_started
+    restart: unless-stopped
+    <<: *backend-secure
+
+  back-scheduler:
+    build: ./backend
+    command: uv run --frozen --no-dev taskiq scheduler app.broker:scheduler app.watchdog
+    environment: *backend-env
+    depends_on:
+      back-migrate:
+        condition: service_completed_successfully
+      back-redis:
+        condition: service_started
+    restart: unless-stopped
+    <<: *backend-secure
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://back-api:61230
+        NEXT_PUBLIC_LLM_PROVIDER: ${LLM_PROVIDER:-fixture}
+    environment:
+      NODE_ENV: production
+      PORT: 54733
+      BACKEND_URL: http://back-api:61230
+      NEXT_PUBLIC_LLM_PROVIDER: ${LLM_PROVIDER:-fixture}
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-56556}:54733"
+    depends_on:
+      back-api:
+        condition: service_started
+    restart: unless-stopped
+    <<: *backend-secure
+
+volumes:
+  back_pg:
+  back_redis:

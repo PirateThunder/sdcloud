@@ -1,0 +1,28 @@
+{UTF-8}
+lookup function table(
+    [(0,-1)-(45,1)],(0,0),(5,0),(10,1),(15,1),(20,0),(25,0),(30,-1),(35,-1),(40,0),(45,0))
+    ~
+    ~ |
+lookup function call=
+    lookup function table(Time)
+    ~
+    ~ |
+rate=
+    lookup function call
+    ~
+    ~ |
+accumulation= INTEG(rate, 0)
+    ~
+    ~ |
+FINAL TIME = 45
+    ~ Minute
+    ~ |
+INITIAL TIME = 0
+    ~ Minute
+    ~ |
+SAVEPER = TIME STEP
+    ~ Minute
+    ~ |
+TIME STEP = 0.25
+    ~ Minute
+    ~ |

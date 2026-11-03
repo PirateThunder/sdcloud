@@ -1,0 +1,30 @@
+{UTF-8}
+Characteristic Time=
+    10
+    ~ Minutes
+    ~ Cooling time constant |
+Heat Loss to Room=
+    (Teacup Temperature - Room Temperature) / Characteristic Time
+    ~ Degrees Fahrenheit/Minute
+    ~ Heat flow |
+Room Temperature=
+    70
+    ~ Degrees Fahrenheit
+    ~ Ambient temperature |
+Teacup Temperature= INTEG (
+    -Heat Loss to Room,
+    180)
+    ~ Degrees Fahrenheit
+    ~ Tea temperature |
+FINAL TIME = 30
+    ~ Minute
+    ~ |
+INITIAL TIME = 0
+    ~ Minute
+    ~ |
+SAVEPER = TIME STEP
+    ~ Minute
+    ~ |
+TIME STEP = 0.125
+    ~ Minute
+    ~ |

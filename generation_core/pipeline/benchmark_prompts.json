@@ -1,0 +1,22 @@
+[
+  {"id": "predator_prey_ru", "description": "Модель хищник-жертва: кролики размножаются, лисы едят кроликов и погибают естественным образом.", "expected_pattern": "predator_prey"},
+  {"id": "sir_ru", "description": "Эпидемия: восприимчивые заражаются при контакте с инфицированными, затем выздоравливают.", "expected_pattern": "sir_epidemic"},
+  {"id": "teacup_ru", "description": "Чашка горячего чая остывает до комнатной температуры со скоростью, пропорциональной разнице температур.", "expected_pattern": "teacup_cooling"},
+  {"id": "exponential_bacteria", "description": "Численность бактерий увеличивается экспоненциально с постоянной скоростью роста.", "expected_pattern": "exponential_growth"},
+  {"id": "logistic_city", "description": "Население города растёт, но рост замедляется по мере приближения к предельной ёмкости среды.", "expected_pattern": "logistic_growth"},
+  {"id": "bass_product", "description": "Новый продукт распространяется на рынке через инновации и подражание между потенциальными и текущими пользователями.", "expected_pattern": "bass_diffusion"},
+  {"id": "inventory_shop", "description": "Склад магазина пополняет запасы с задержкой, а продажи уменьшают складские остатки.", "expected_pattern": "inventory"},
+  {"id": "workforce_company", "description": "Компания нанимает новичков, которые со временем становятся экспертами, а часть экспертов увольняется.", "expected_pattern": "workforce"},
+  {"id": "supply_delay", "description": "Склад получает заказы с задержкой поставки, а продажи непрерывно уменьшают запас.", "expected_pattern": "supply_delay"},
+  {"id": "renewable_fish", "description": "Популяция рыбы восстанавливается логистически, пока промысел не превышает естественный прирост.", "expected_pattern": "renewable_resource"},
+  {"id": "predator_prey_en", "description": "Lotka Volterra model: rabbits reproduce, foxes consume rabbits, and foxes die naturally.", "expected_pattern": "predator_prey"},
+  {"id": "sir_en", "description": "SIR epidemic model with susceptible, infectious and recovered populations, infection and recovery flows.", "expected_pattern": "sir_epidemic"},
+  {"id": "logistic_yeast", "description": "Yeast population grows exponentially at first and then stabilizes near carrying capacity.", "expected_pattern": "logistic_growth"},
+  {"id": "teacup_coffee", "description": "Hot coffee cools in a room with heat loss proportional to the temperature difference.", "expected_pattern": "teacup_cooling"},
+  {"id": "inventory_retail", "description": "Retail inventory decreases through sales and is replenished toward a target stock level.", "expected_pattern": "inventory"},
+  {"id": "workforce_juniors", "description": "Junior employees are hired, mature into senior employees, and seniors leave the company after an average tenure.", "expected_pattern": "workforce"},
+  {"id": "bass_launch", "description": "A product launch has adoption driven by external innovation and word of mouth from current adopters.", "expected_pattern": "bass_diffusion"},
+  {"id": "supply_warehouse", "description": "Warehouse replenishment arrives after a shipping delay while customer demand depletes inventory.", "expected_pattern": "supply_delay"},
+  {"id": "resource_forest", "description": "A renewable forest regenerates toward its carrying capacity while timber is harvested at a fractional rate.", "expected_pattern": "renewable_resource"},
+  {"id": "exponential_interest", "description": "A bank deposit grows continuously at a fixed interest rate without withdrawals.", "expected_pattern": "exponential_growth"}
+]

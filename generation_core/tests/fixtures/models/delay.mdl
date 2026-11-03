@@ -1,0 +1,36 @@
+{UTF-8}
+Delay Time=
+    4
+    ~ Month
+    ~ |
+Input=
+    -1 + STEP(5, 5)
+    ~
+    ~ |
+Output Delay1=
+    DELAY1(Input, Delay Time)
+    ~
+    ~ |
+Output Delay3=
+    DELAY3(Input, Delay Time)
+    ~
+    ~ |
+Smooth Output=
+    SMOOTH(Input, Delay Time)
+    ~
+    ~ |
+Accumulation= INTEG(Output Delay1, 0)
+    ~
+    ~ |
+FINAL TIME = 20
+    ~ Month
+    ~ |
+INITIAL TIME = 0
+    ~ Month
+    ~ |
+SAVEPER = TIME STEP
+    ~ Month
+    ~ |
+TIME STEP = 0.25
+    ~ Month
+    ~ |
