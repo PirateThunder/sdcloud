@@ -164,6 +164,7 @@ async def run_benchmark(
                 case["behavior_metrics"] = behavior_metrics
                 case["actual_pattern"] = document.pattern_id
             except Exception as exc:
+                case["repair_attempts"] = getattr(exc, "repair_attempts", 0)
                 case["error"] = str(exc)[:2000]
             case["duration_seconds"] = round(time.monotonic() - started, 3)
             cases.append(case)

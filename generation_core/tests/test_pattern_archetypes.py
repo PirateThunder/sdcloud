@@ -75,3 +75,15 @@ def test_nonlinear_oscillators_have_expected_ranges(pattern_id, variable, minimu
     series = result.variables[variable]
     assert min(series) < minimum
     assert max(series) > maximum
+
+
+def test_all_benchmark_descriptions_select_expected_archetype():
+    from pipeline.benchmark import load_prompts
+
+    mismatches = []
+    for prompt in load_prompts():
+        selected = select_pattern(prompt["description"])
+        actual = selected.id if selected else None
+        if actual != prompt["expected_pattern"]:
+            mismatches.append((prompt["id"], prompt["expected_pattern"], actual))
+    assert not mismatches

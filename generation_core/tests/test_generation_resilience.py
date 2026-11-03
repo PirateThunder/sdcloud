@@ -142,6 +142,13 @@ async def test_dsl_numeric_values_and_assumptions_are_normalized_without_repair(
         "tables",
         "assumptions",
     ]
+    variants = llm.schemas["variables"]["properties"]["variables"]["items"]["anyOf"]
+    stock_schema = next(item for item in variants if item["properties"]["kind"]["enum"] == ["stock"])
+    constant_schema = next(
+        item for item in variants if item["properties"]["kind"]["enum"] == ["constant"]
+    )
+    assert {"type": "null"} not in stock_schema["properties"]["initial"]["anyOf"]
+    assert {"type": "null"} in constant_schema["properties"]["initial"]["anyOf"]
     assert llm.schemas["equations"]["required"] == ["expressions"]
 
 
@@ -161,3 +168,127 @@ def test_nonstock_initial_becomes_expression_before_kind_filtering():
     )
     assert variables[0]["expression"] == {"op": "lit", "value": 0.1}
     assert "initial" not in variables[0]
+
+
+def valid_repair_payload():
+    from pipeline.generation import _repair_payload
+    from pipeline.pattern_library import get_pattern
+
+    return _repair_payload(get_pattern("predator_prey").document)
+
+
+async def test_invalid_final_repair_uses_remaining_budget():
+    llm = EarlyRepairLLM(
+        replacements={
+            "equations": {
+                "expressions": {
+                    "prey_births": "prey + prey_growth",
+                    "predation": "prey * predators * predation_rate",
+                    "predator_births": "predation * conversion_efficiency",
+                    "predator_deaths": "predators * predator_mortality",
+                    "prey_growth": 0.1,
+                    "predation_rate": 0.02,
+                    "conversion_efficiency": 0.1,
+                    "predator_mortality": 0.1,
+                }
+            },
+            "repair_1": {"variables": []},
+            "repair_2": valid_repair_payload(),
+        }
+    )
+    document = await generate_model(request(), llm, max_repairs=2)
+    assert document.validation.status == "passed"
+    assert document.repair_attempts == 2
+    assert llm.calls[-2:] == ["repair_1", "repair_2"]
+
+
+def test_final_repair_preserves_previous_expressions_for_null_values():
+    from pipeline.generation import _repair
+
+    payload = valid_repair_payload()
+    for item in payload["variables"]:
+        if item["kind"] != "stock":
+            item["expression"] = None
+            item["initial"] = None
+    from pipeline.pattern_library import get_pattern
+
+    original = get_pattern("predator_prey").document
+    repaired = _repair(original, payload, 1)
+    assert [item.expression for item in repaired.variables if item.kind != "stock"] == [
+        item.expression for item in original.variables if item.kind != "stock"
+    ]
+
+
+async def test_smoke_failure_uses_repair_budget(monkeypatch):
+    import pipeline.generation as generation
+
+    original_simulate = generation.simulate_model
+    calls = 0
+    horizons = []
+
+    def fail_first_smoke(document, parameters):
+        nonlocal calls
+        calls += 1
+        horizons.append(parameters.final_time)
+        if calls == 1:
+            raise ValueError("non-finite values")
+        return original_simulate(document, parameters)
+
+    monkeypatch.setattr(generation, "simulate_model", fail_first_smoke)
+    llm = EarlyRepairLLM(replacements={"repair_1": valid_repair_payload()})
+    document = await generate_model(request(), llm, max_repairs=1)
+    assert document.validation.status == "passed"
+    assert document.repair_attempts == 1
+    assert calls == 2
+    assert horizons == [100, 100]
+    assert llm.calls[-1] == "repair_1"
+
+
+def test_merge_normalizes_stock_topology_and_dynamic_constant():
+    from pipeline.generation import _merge
+
+    variables = _merge(
+        [
+            {
+                "id": "members",
+                "kind": "stock",
+                "units": {"person": 1},
+                "initial": 10,
+                "derivative": "members * 2",
+            },
+            {
+                "id": "recruitment",
+                "kind": "flow",
+                "units": {"person": 1, "week": -1},
+                "source": {"kind": "cloud", "id": "recruitment_source"},
+                "target": {"kind": "stock", "id": "members"},
+            },
+            {"id": "demand", "kind": "constant", "units": {"item": 1, "week": -1}},
+        ],
+        {
+            "recruitment": "if_then_else(time >= 60, 5, 0)",
+            "demand": "time",
+        },
+    )
+    stock = next(item for item in variables if item.id == "members")
+    demand = next(item for item in variables if item.id == "demand")
+    recruitment = next(item for item in variables if item.id == "recruitment")
+    assert stock.derivative is None
+    assert demand.kind == "auxiliary"
+    assert recruitment.expression.otherwise.op == "mul"
+
+
+def test_explicit_dimensionless_units_are_normalized():
+    _, variables = _variable_response(
+        {
+            "variables": [
+                {
+                    "id": "weight",
+                    "kind": "constant",
+                    "units": {"dimensionless": 1},
+                    "initial": 0.1,
+                }
+            ]
+        }
+    )
+    assert variables[0]["units"] == {}

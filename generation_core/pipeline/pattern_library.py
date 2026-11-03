@@ -691,11 +691,11 @@ _BUILDERS = {
 _METADATA = {
     "exponential_growth": (
         "Exponential growth and decline",
-        ("growth", "population", "decay", "рост", "экспонент"),
+        ("growth", "population", "decay", "interest", "deposit", "рост", "экспонент"),
     ),
     "logistic_growth": (
         "Growth limited by carrying capacity",
-        ("logistic", "capacity", "limit", "ёмкость", "логист"),
+        ("logistic", "carrying capacity", "limit", "ёмкост", "логист"),
     ),
     "teacup_cooling": (
         "Cooling and first-order equilibration",
@@ -711,7 +711,17 @@ _METADATA = {
     ),
     "bass_diffusion": (
         "Product adoption and diffusion",
-        ("bass", "adoption", "diffusion", "product", "продукт", "внедрен", "диффуз"),
+        (
+            "bass",
+            "adoption",
+            "diffusion",
+            "product",
+            "продукт",
+            "внедрен",
+            "диффуз",
+            "инновац",
+            "подражан",
+        ),
     ),
     "inventory": (
         "Inventory and backlog management",
@@ -719,15 +729,51 @@ _METADATA = {
     ),
     "workforce": (
         "Hiring and workforce maturation",
-        ("workforce", "employee", "hiring", "rookie", "expert", "персонал", "сотрудник", "найм"),
+        (
+            "workforce",
+            "employee",
+            "hiring",
+            "rookie",
+            "expert",
+            "персонал",
+            "сотрудник",
+            "найм",
+            "новичк",
+            "эксперт",
+            "наним",
+            "увольн",
+        ),
     ),
     "supply_delay": (
         "Supply chains and material delays",
-        ("supply", "delivery", "delay", "shipment", "постав", "задерж", "достав"),
+        (
+            "supply",
+            "delivery",
+            "delay",
+            "shipment",
+            "shipping",
+            "replenishment",
+            "постав",
+            "задерж",
+            "задержка поставки",
+            "задержкой поставки",
+            "достав",
+        ),
     ),
     "renewable_resource": (
         "Renewable resources and harvesting",
-        ("resource", "fish", "forest", "harvest", "renewable", "рыб", "лес", "ресурс"),
+        (
+            "resource",
+            "fish",
+            "forest",
+            "harvest",
+            "renewable",
+            "рыб",
+            "лес",
+            "ресурс",
+            "промысел",
+            "восстанавли",
+        ),
     ),
     "sirs_epidemic": (
         "Seasonal SIRS epidemic with waning immunity",
@@ -739,7 +785,14 @@ _METADATA = {
     ),
     "student_club": (
         "Student club growth, capacity, burnout and campaigns",
-        ("speaking club", "student club", "student community", "english club", "клуб", "студен"),
+        (
+            "speaking club",
+            "english speaking club",
+            "student club",
+            "student community",
+            "клуб",
+            "студен",
+        ),
     ),
     "lorenz_system": (
         "Lorenz chaotic three-variable attractor",
@@ -766,7 +819,7 @@ def select_pattern(description: str) -> Pattern | None:
     text = description.lower()
     candidates = []
     for pattern_id, (_, tags) in _METADATA.items():
-        score = sum(tag in text for tag in tags)
+        score = sum(len(tag) for tag in tags if tag in text)
         if score:
             candidates.append((score, pattern_id))
     if not candidates:

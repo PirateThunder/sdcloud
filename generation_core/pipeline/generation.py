@@ -15,7 +15,7 @@ from .exceptions import LLMResponseError, ModelValidationError
 from .expression_parser import normalize_expression
 from .formats import export_xmile
 from .io import write_json_atomic, write_stage
-from .ir import dependencies
+from .ir import dependencies, walk
 from .llm import LLMClient
 from .pattern_library import pattern_prompt, select_pattern
 from .prompts import (
@@ -35,6 +35,7 @@ from .schemas import (
     SDVariable,
     SimulationParameters,
     TimeSettings,
+    ValidationIssue,
 )
 from .semantics import with_semantic_validation
 from .simulation import simulate_model
@@ -58,7 +59,7 @@ _ENDPOINT_SCHEMA = {
     "required": ["kind", "id"],
     "additionalProperties": False,
 }
-_VARIABLE_ITEM_SCHEMA = {
+_BASE_VARIABLE_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
         "id": {"type": "string"},
@@ -93,6 +94,21 @@ _VARIABLE_ITEM_SCHEMA = {
         "exogenous": {"type": "boolean"},
     },
     "additionalProperties": False,
+}
+
+
+def _typed_variable_schema(kind: str) -> dict:
+    properties = dict(_BASE_VARIABLE_ITEM_SCHEMA["properties"])
+    properties["kind"] = {"type": "string", "enum": [kind]}
+    if kind == "stock":
+        properties["initial"] = _EXPRESSION_INPUT_SCHEMA
+    return {**_BASE_VARIABLE_ITEM_SCHEMA, "properties": properties}
+
+
+_VARIABLE_ITEM_SCHEMA = {
+    "anyOf": [
+        _typed_variable_schema(kind) for kind in ("stock", "flow", "auxiliary", "constant")
+    ]
 }
 _TABLE_ITEM_SCHEMA = {
     "type": "object",
@@ -236,7 +252,10 @@ async def _call_stage[T](
                 previous_response = exc.response_text
             if not budget.take():
                 if isinstance(exc, ValidationError):
-                    raise ModelValidationError(f"invalid {stage}: {exc}") from exc
+                    raise ModelValidationError(
+                        f"invalid {stage}: {exc}", repair_attempts=budget.attempts
+                    ) from exc
+                exc.repair_attempts = budget.attempts
                 raise
             repair_stage = f"{stage}_repair_{budget.attempts}"
             _save_stage(
@@ -325,6 +344,12 @@ def _variable_response(response: Any) -> tuple[dict, list[dict]]:
     normalized = []
     for item in raw:
         value = dict(item)
+        if isinstance(value.get("units"), dict):
+            value["units"] = {
+                name: power
+                for name, power in value["units"].items()
+                if name not in {"1", "dimensionless"}
+            }
         kind = value.get("kind")
         if kind == "stock":
             if value.get("initial") is None:
@@ -433,7 +458,48 @@ def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
             merged.append(TypeAdapter(SDVariable).validate_python(value))
         except ValidationError as exc:
             raise ModelValidationError(f"invalid variable {value.get('id')}: {exc}") from exc
-    return merged
+    return _normalize_generated_variables(merged)
+
+
+def _normalize_generated_variables(variables: list[SDVariable]) -> list[SDVariable]:
+    by_id = {item.id: item for item in variables}
+    connected_stocks = {
+        endpoint.id
+        for item in variables
+        if item.kind == "flow"
+        for endpoint in (item.source, item.target)
+        if endpoint is not None and endpoint.kind == "stock"
+    }
+    dynamic_calls = {
+        "step",
+        "pulse",
+        "pulse_train",
+        "ramp",
+        "delay1",
+        "delay3",
+        "smooth",
+        "smooth3",
+        "initial",
+    }
+    normalized = []
+    for item in variables:
+        if item.kind == "stock" and item.id in connected_stocks and item.derivative is not None:
+            item = item.model_copy(update={"derivative": None})
+        if item.kind == "constant":
+            dynamic = any(
+                node.op == "time" or (node.op == "call" and node.name in dynamic_calls)
+                for node in walk(item.expression)
+            ) or any(
+                name in by_id and by_id[name].kind != "constant"
+                for name in dependencies(item.expression)
+            )
+            if dynamic:
+                payload = item.model_dump(mode="json")
+                payload["kind"] = "auxiliary"
+                payload.pop("exogenous", None)
+                item = TypeAdapter(SDVariable).validate_python(payload)
+        normalized.append(item)
+    return normalized
 
 
 def _validated(document: ModelDocument) -> tuple[ModelDocument, list]:
@@ -447,6 +513,13 @@ def _repair(document: ModelDocument, response: Any, attempt: int) -> ModelDocume
         raise ModelValidationError("repair must return a complete variables list")
     try:
         metadata, raw = _variable_response(response)
+        previous = {item.id: item for item in document.variables}
+        for item in raw:
+            if item.get("kind") == "stock" or item.get("expression") is not None:
+                continue
+            existing = previous.get(item.get("id"))
+            if existing is not None and existing.kind != "stock":
+                item["expression"] = existing.expression.model_dump(mode="json")
         variables = _merge(raw, _expressions({"variables": raw}))
         return ModelDocument(
             id=document.id,
@@ -474,6 +547,29 @@ def _repair_payload(document: ModelDocument) -> dict:
         "tables": [item.model_dump(mode="json") for item in document.tables],
         "assumptions": [item.model_dump(mode="json") for item in document.assumptions],
     }
+
+
+def _smoke(document: ModelDocument) -> dict[str, Any]:
+    try:
+        smoke = simulate_model(
+            document,
+            SimulationParameters(
+                initial_time=document.time.initial_time,
+                final_time=document.time.final_time,
+                time_step=document.time.time_step,
+                saveper=document.time.saveper,
+                integration_method="euler",
+            ),
+        )
+        if not all(
+            math.isfinite(value) for series in smoke.variables.values() for value in series
+        ):
+            raise ModelValidationError("smoke simulation returned non-finite values")
+    except Exception as exc:
+        raise ModelValidationError(
+            f"generated model smoke simulation failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    return {"points": len(smoke.time), "engine": smoke.engine, "method": smoke.integration_method}
 
 
 async def generate_model(
@@ -578,30 +674,74 @@ async def generate_model(
 
     _save_stage(workdir, "validation")
     document, errors = _validated(document)
-    while errors and budget.take():
+    last_repair_error: Exception | None = None
+    while True:
+        if not errors:
+            _save_stage(workdir, "smoke")
+            try:
+                smoke = _smoke(document)
+            except ModelValidationError as exc:
+                errors = [
+                    ValidationIssue(
+                        code="SMOKE_SIMULATION",
+                        severity="error",
+                        path="simulation",
+                        message=str(exc)[:2000],
+                    )
+                ]
+                _save_stage(workdir, "smoke", {"error": str(exc)})
+            else:
+                _save_stage(workdir, "smoke", smoke)
+        if not errors or not budget.take():
+            break
         attempt = budget.attempts
-        _save_stage(workdir, f"repair_{attempt}", [item.model_dump(mode="json") for item in errors])
-        response = await llm.chat_json(
-            REPAIR_PROMPT.format(
-                brief=brief_text,
-                pattern=pattern_text,
-                errors=json.dumps(
-                    [item.model_dump(mode="json") for item in errors], ensure_ascii=False, indent=2
+        prompt_errors = list(errors)
+        if last_repair_error is not None:
+            prompt_errors.append(
+                ValidationIssue(
+                    code="INVALID_REPAIR_RESPONSE",
+                    severity="error",
+                    path=f"repair_{attempt - 1}",
+                    message=str(last_repair_error)[:2000],
+                )
+            )
+        _save_stage(
+            workdir,
+            f"repair_{attempt}",
+            [item.model_dump(mode="json") for item in prompt_errors],
+        )
+        try:
+            response = await llm.chat_json(
+                REPAIR_PROMPT.format(
+                    brief=brief_text,
+                    pattern=pattern_text,
+                    errors=json.dumps(
+                        [item.model_dump(mode="json") for item in prompt_errors],
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    document=json.dumps(_repair_payload(document), ensure_ascii=False, indent=2),
                 ),
-                document=json.dumps(_repair_payload(document), ensure_ascii=False, indent=2),
-            ),
-            stage=f"repair_{attempt}",
-            system="You repair system dynamics models using validator errors. Return only JSON.",
-            temperature=0.1,
-            response_schema=_VARIABLES_RESPONSE_SCHEMA,
-        )
-        _save_stage(workdir, f"repair_{attempt}_response", response)
-        document = _repair(document, response, attempt)
-        document, errors = _validated(document)
+                stage=f"repair_{attempt}",
+                system="You repair system dynamics models using validator errors. Return only JSON.",
+                temperature=0.1,
+                response_schema=_VARIABLES_RESPONSE_SCHEMA,
+            )
+            _save_stage(workdir, f"repair_{attempt}_response", response)
+            candidate = _repair(document, response, attempt)
+            document, errors = _validated(candidate)
+        except (LLMResponseError, ModelValidationError, ValidationError) as exc:
+            last_repair_error = exc
+            _save_stage(workdir, f"repair_{attempt}_error", {"error": str(exc)})
+            continue
+        last_repair_error = None
     if errors:
-        raise ModelValidationError(
-            "; ".join(f"{item.code} at {item.path}: {item.message}" for item in errors[:10])
+        detail = "; ".join(
+            f"{item.code} at {item.path}: {item.message}" for item in errors[:10]
         )
+        if last_repair_error is not None:
+            detail = f"{detail}; last repair response failed: {last_repair_error}"
+        raise ModelValidationError(detail, repair_attempts=budget.attempts)
     document = document.model_copy(update={"repair_attempts": budget.attempts})
     _save_stage(workdir, "validation", document.validation.model_dump(mode="json"))
     _save_stage(
@@ -611,34 +751,6 @@ async def generate_model(
             "cld": document.cld_data.model_dump(mode="json"),
             "sfd": document.sfd_data.model_dump(mode="json"),
         },
-    )
-
-    _save_stage(workdir, "smoke")
-    try:
-        horizon = document.time.final_time - document.time.initial_time
-        smoke_step = min(document.time.time_step, horizon / 4)
-        smoke = simulate_model(
-            document,
-            SimulationParameters(
-                initial_time=document.time.initial_time,
-                final_time=document.time.initial_time + smoke_step * 4,
-                time_step=smoke_step,
-                saveper=smoke_step,
-                integration_method="euler",
-            ),
-        )
-        if not all(
-            math.isfinite(value) for series in smoke.variables.values() for value in series
-        ):
-            raise ModelValidationError("smoke simulation returned non-finite values")
-    except Exception as exc:
-        raise ModelValidationError(
-            f"generated model smoke simulation failed: {type(exc).__name__}: {exc}"
-        ) from exc
-    _save_stage(
-        workdir,
-        "smoke",
-        {"points": len(smoke.time), "engine": smoke.engine, "method": smoke.integration_method},
     )
 
     _save_stage(workdir, "exports")

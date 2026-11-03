@@ -82,12 +82,13 @@ async def test_bounded_repairs_invalid_generation():
 
 async def test_repair_stops_after_limit():
     llm = RepairLLM(successful=False)
-    with pytest.raises(ModelValidationError, match="INVALID_DEATH_FLOW"):
+    with pytest.raises(ModelValidationError, match="INVALID_DEATH_FLOW") as exc_info:
         await generate_model(
             GenerationRequest(description="Модель хищник-жертва: кролики и лисы"),
             llm,
             max_repairs=1,
         )
+    assert exc_info.value.repair_attempts == 1
     assert llm.calls.count("repair_1") == 1
     assert "repair_2" not in llm.calls
 

@@ -284,17 +284,103 @@ def _normalized_ast(value: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _numeric_value(value: dict[str, Any]) -> float | None:
+    op = value.get("op")
+    if op == "lit" and not isinstance(value.get("value"), bool):
+        number = value.get("value")
+        return float(number) if isinstance(number, int | float) and math.isfinite(number) else None
+    if op in {"neg", "pos"}:
+        number = _numeric_value(value.get("arg", {}))
+        return None if number is None else -number if op == "neg" else number
+    if op not in {"add", "sub", "mul", "div", "mod", "pow"}:
+        return None
+    args = value.get("args", [])
+    if len(args) != 2:
+        return None
+    left, right = (_numeric_value(item) for item in args)
+    if left is None or right is None:
+        return None
+    try:
+        if op == "add":
+            number = left + right
+        elif op == "sub":
+            number = left - right
+        elif op == "mul":
+            number = left * right
+        elif op == "div":
+            number = left / right
+        elif op == "mod":
+            number = left % right
+        else:
+            number = left**right
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    return number if isinstance(number, int | float) and math.isfinite(number) else None
+
+
+def _is_zero_literal(value: dict[str, Any]) -> bool:
+    return (
+        value.get("op") == "lit"
+        and not isinstance(value.get("value"), bool)
+        and value.get("value") == 0
+    )
+
+
+def _normalize_semantics(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    for key in ("arg", "condition", "then", "otherwise"):
+        if isinstance(result.get(key), dict):
+            result[key] = _normalize_semantics(result[key])
+    for key in ("args", "values"):
+        if isinstance(result.get(key), list):
+            result[key] = [
+                _normalize_semantics(item) if isinstance(item, dict) else item
+                for item in result[key]
+            ]
+    number = _numeric_value(result)
+    if result.get("op") != "lit" and number is not None:
+        return {"op": "lit", "value": number}
+
+    op = result.get("op")
+    if op in {"add", "sub", "mod", "lt", "le", "gt", "ge", "eq", "ne"}:
+        args = result.get("args", [])
+        if len(args) == 2:
+            if _is_zero_literal(args[0]) and not _is_zero_literal(args[1]):
+                args[0] = {"op": "mul", "args": [{"op": "lit", "value": 0}, args[1]]}
+            elif _is_zero_literal(args[1]) and not _is_zero_literal(args[0]):
+                args[1] = {"op": "mul", "args": [{"op": "lit", "value": 0}, args[0]]}
+    if op == "if":
+        for key, other_key in (("then", "otherwise"), ("otherwise", "then")):
+            if _is_zero_literal(result[key]) and not _is_zero_literal(result[other_key]):
+                result[key] = {
+                    "op": "mul",
+                    "args": [{"op": "lit", "value": 0}, result[other_key]],
+                }
+    if op == "call" and result.get("name") in {"min", "max", "minimum", "maximum"}:
+        args = result.get("args", [])
+        nonzero = next((item for item in args if not _is_zero_literal(item)), None)
+        if nonzero is not None:
+            result["args"] = [
+                {"op": "mul", "args": [{"op": "lit", "value": 0}, nonzero]}
+                if _is_zero_literal(item)
+                else item
+                for item in args
+            ]
+    return result
+
+
 def normalize_expression(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
-        return parse_expression(value).model_dump(mode="json")
-    if isinstance(value, bool | int | float):
-        return LiteralExpression(op="lit", value=value).model_dump(mode="json")
-    if not isinstance(value, dict):
+        expression = parse_expression(value)
+    elif isinstance(value, bool | int | float):
+        expression = LiteralExpression(op="lit", value=value)
+    elif isinstance(value, dict):
+        try:
+            expression = _EXPRESSION_ADAPTER.validate_python(_normalized_ast(value))
+        except ValidationError as exc:
+            raise ModelValidationError(f"invalid expression AST: {exc}") from exc
+    else:
         raise ModelValidationError(f"expression must be a formula, number or AST object: {value!r}")
-    try:
-        expression = _EXPRESSION_ADAPTER.validate_python(_normalized_ast(value))
-    except ValidationError as exc:
-        raise ModelValidationError(f"invalid expression AST: {exc}") from exc
     if isinstance(expression, CallExpression):
         signature = FUNCTION_SIGNATURES.get(expression.name)
         if signature is not None and not signature[0] <= len(expression.args) <= signature[1]:
@@ -308,4 +394,4 @@ def normalize_expression(value: Any) -> dict[str, Any]:
             then=expression.args[1],
             otherwise=expression.args[2],
         )
-    return expression.model_dump(mode="json")
+    return _normalize_semantics(expression.model_dump(mode="json"))

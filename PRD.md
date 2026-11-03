@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core 0.2.0, backend и frontend реализованы и проверены; production release не выполнен; полный benchmark core 26×3 не запускался
+**Статус:** generation_core 0.2.1, backend и frontend реализованы и проверены; local benchmark 26×3 завершён, но quality targets не достигнуты; production release не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -488,7 +488,17 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
 - Первая загрузка весов использует сеть или подготовленный cache, после неё внешние LLM API не нужны. Облачный fallback в local-режиме отсутствует.
 - Проверки 0.2.0: 96 core tests, Ruff, fixture CLI/benchmark, шесть behavior-oracles и live OpenRouter predator-prey. Полный benchmark 26×3 и реальный 30B-инференс ещё не выполнены; live SIRS с остаточным `R₀ < 1` был отклонён fail-closed.
 
-## 15. Источники анализа
+## 15. Live hardening и проверка на GPU 0.2.1
+
+- Неудачные final repair responses обрабатываются в общем bounded budget; прежние equations сохраняются при `null`, failed benchmark cases содержат фактическое число repairs.
+- Kind-specific strict JSON Schema запрещает `initial=null` у stock. Generation-нормализация делает units нулевых literals явными, сворачивает числовые formulas, нормализует `dimensionless`, удаляет derivative при flow topology и превращает динамические constants в auxiliaries. Импортированные документы не изменяются.
+- Smoke-симуляция выполняется на полном горизонте и участвует в bounded repair. Нестабильные и семантически неправильные модели отклоняются.
+- На RTX 5090 Laptop 24 GB под WSL2 подтверждены vLLM, CLI generate/simulate, REST jobs и продуктовый сценарий OTP → chat → две версии модели → simulation → Python export. Predator-prey: 22,6 с, 0 repairs, 41 point; teacup REST: 14,1 с, 0 repairs, 21 point. Под нагрузкой около 21 ГБ VRAM и обычно 130–150 токенов/с.
+- Pattern selection учитывает специфичность тегов; все 26 benchmark-описаний проходят classification golden test и выбирают ожидаемый archetype.
+- Полный local benchmark 26×3: 78 cases, executable 83,3%, semantic 83,3%, behavior 75,6%, average 31,256 с. Все 26 описаний имеют хотя бы один semantic success; 14 имеют behavior success во всех трёх запусках. Bullwhip 3/3, student club 2/3. Целевые 90/85/85% не достигнуты.
+- Основные остаточные ошибки: nondeterministic malformed JSON/DSL, unknown references и units, статические supply-delay модели, один repair prompt превысил контекст 16K. Validators не ослаблялись. Offline suite: 104 core tests, backend 20, frontend 12 и 2/2 deterministic browser E2E. Production quality gate и release не выполнены.
+
+## 16. Источники анализа
 
 - Старая предметная логика: `../sdcloud_old/code/backend/app/services/generation`, `services/graph`, `services/simulation`, `utils`.
 - Старые пользовательские контракты: `../sdcloud_old/code/SPEC.md`, `backend/app/api/v1/endpoints`, `frontend/src/fsd`.

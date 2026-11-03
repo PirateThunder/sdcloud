@@ -137,6 +137,9 @@ STAGE_REPAIR_PROMPT = """\
 только существующие variable ids; разрешены DSL-формулы из исходного задания
 или canonical typed AST. Не повторяй malformed JSON, op с именем функции вместо
 op="call", числовые assumption.value или expressions для несуществующих ids.
+Для stock initial всегда передавай число или формулу, а не null. Значение нельзя
+переносить в rationale или assumptions вместо initial. Вызывай функции напрямую,
+например min(a, b), без обёртки call(...).
 """
 
 REPAIR_PROMPT = """\
@@ -166,6 +169,14 @@ ModelBrief:
 Каждый stock содержит initial, каждая flow/auxiliary/constant содержит expression.
 Для initial/expression разрешены DSL-формулы, числа или canonical typed AST.
 Каждая flow содержит source/target и units. Не используй производную stock: она вычисляется из topology.
+
+Специальные исправления:
+- DERIVATIVE_TOPOLOGY_MISMATCH: удали derivative stock (null), сохранив flows и их topology.
+- DYNAMIC_CONSTANT: переменная, зависящая от time или runtime variables, должна быть auxiliary, а не constant.
+- Если в conditional branches одна ветка — нулевой literal, а другая имеет units, запиши ноль как 0 * другая_ветка, например 0 * recruitment. Аналогично для min/max.
+- Не исправляй units молчаливой сменой declared units: сначала исправь formula, conversion coefficients и flow topology.
+- При SMOKE_SIMULATION/non-finite исправь уравнения или уменьши time_step и saveper; не сокращай final_time и не скрывай ошибку.
+- Вызывай min/max и другие функции напрямую, без обёртки call(...).
 
 Исправь именно указанные ошибки, сохрани корректные части и ModelBrief. Не удаляй predation и другие существенные процессы только ради прохождения валидации. Death/outflow исходит из stock, birth/inflow направлен в stock. Не назначай произвольные ненулевые коэффициенты. Не добавляй Python или другие поля.
 """

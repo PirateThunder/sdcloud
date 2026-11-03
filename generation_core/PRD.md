@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4 и reliability/local-LLM hardening 0.2.0 реализованы; полный benchmark 26×3 не запускался
+**Статус:** этапы 0–4 и reliability/local-LLM hardening 0.2.1 реализованы; benchmark 26×3 завершён, но quality targets не достигнуты
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -723,4 +723,13 @@ uv run ruff check .
 - `docker-compose.local-llm.yml` добавляет vLLM и направляет gen-api/gen-worker только на него. По умолчанию используется `QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, max model len 16384 и GPU memory utilization 0.92.
 - Целевое окружение — NVIDIA GPU с 24 GB VRAM и NVIDIA Container Toolkit. Для другого OpenAI-compatible сервера отдельный vLLM container не обязателен.
 - Первая загрузка весов требует сети или подготовленного Hugging Face cache; после загрузки внешние LLM API не используются и облачный fallback отсутствует.
-- В текущем окружении реальный 30B-инференс не запускался. Требуемые проверки на целевом GPU: `/v1/models`, CLI generate/simulate, REST job и benchmark 26×3 с замерами executable/semantic/behavior rates, latency и VRAM.
+- На RTX 5090 Laptop 24 GB под WSL2 подтверждены `/v1/models`, CLI generate/simulate, REST generation/simulation и полный продуктовый сценарий. Полный benchmark 26×3 завершён; метрики и недостигнутые targets зафиксированы ниже.
+
+## 21. Live hardening 0.2.1
+
+- Final repair продолжается после malformed response в пределах общего budget; `null` не стирает прежние equations, failed cases сохраняют repair count. Kind-specific strict schema требует ненулевой stock initial.
+- Generation-нормализация без `eval` и без изменения численной семантики: явные units нулевых literals, numeric folding, `dimensionless → {}`, удаление derivative при flow topology и `constant → auxiliary` при динамике. Импортированные модели не затрагиваются.
+- Smoke выполняется на полном горизонте и входит в repair loop. Валидаторы units/topology не ослаблены ради benchmark pass-rate.
+- CLI predator-prey: 22,6 с, 0 repairs, 10 variables, 41 finite point. REST teacup: 14,1 с, 0 repairs, 21 finite point. Продуктовый чат создал две версии, ответил на вопрос, запустил simulation и Python export.
+- Pattern selection покрыт classification golden suite: все 26 описаний выбирают ожидаемый archetype. Полный local benchmark 26×3: 78 cases, executable 83,3%, semantic 83,3%, behavior 75,6%, average 31,256 с. Все 26 описаний имеют хотя бы один semantic success; 14 имеют behavior success во всех трёх запусках. Bullwhip 3/3, student club 2/3.
+- Quality targets 90/85/85% не достигнуты. Остаточные классы: malformed JSON/DSL, unknown references и units, статические supply-delay модели, превышение 16K context в одном repair. Validators не ослаблялись. Offline suite: 104 tests; Ruff зелёный.

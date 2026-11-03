@@ -9,6 +9,40 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.2.1 — 2026-11-03
+
+Устойчивость repair и проверенный локальный inference на RTX 5090.
+
+- **Repair**: неудачные ответы repair расходуют ограниченный бюджет вместо немедленного
+  прерывания; прежние уравнения сохраняются при `null`; число попыток записывается
+  и для failed benchmark cases.
+- **Structured output**: kind-specific schema требует ненулевой `initial` у stock и
+  запрещает `null` на уровне guided output, а не только последующей валидации.
+- **Нормализация**: нулевые literals получают явные units через умножение на ноль,
+  числовые формулы сворачиваются в literals, `dimensionless` приравнен к `{}`, stock
+  derivative удаляется при заданной flow topology, динамические constants становятся
+  auxiliaries. Импортированные модели эта generation-нормализация не изменяет.
+- **Численная проверка**: smoke-симуляция выполняется на полном горизонте и входит
+  в bounded repair; нестабильная модель не возвращается как готовая.
+- **Локальный inference**: на RTX 5090 Laptop 24 GB под WSL2 подтверждены vLLM,
+  CLI generate/simulate, REST generation/simulation и полный продуктовый сценарий
+  OTP → модель → контекстный вопрос → новая версия → симуляция → Python export.
+  Измеренные smoke-прогоны: predator-prey 22,6 с без repairs и teacup 14,1 с без repairs;
+  около 21 ГБ VRAM и обычно 130–150 токенов/с.
+- **Pattern selection**: специфичность тегов учитывается при выборе archetype;
+  отдельный golden test подтверждает правильный выбор для всех 26 benchmark-описаний.
+- **Полный local benchmark**: 26 описаний × 3 запуска (78 cases) на RTX 5090:
+  executable 83,3%, semantic 83,3%, behavior 75,6%, средняя длительность case 31,256 с.
+  Bullwhip прошёл 3/3, студенческий клуб 2/3; все 26 описаний имеют хотя бы один
+  semantic success, 14 описаний имеют behavior success во всех трёх запусках.
+  Целевые 90/85/85% не достигнуты; validators не ослаблены ради pass-rate.
+- **Запуск**: ожидание первой загрузки весов настраивается через
+  `VLLM_HEALTH_START_PERIOD`, по умолчанию 1800 секунд.
+
+Проверки: generation_core 104 tests, backend 20 tests, frontend 12 tests и 2/2
+детерминированных браузерных E2E; Ruff, TypeScript и production builds зелёные.
+Production quality gate и production release не выполнены.
+
 ## 0.2.0 — 2026-11-03
 
 Устойчивость LLM-генерации, behavior benchmark и локальный inference-контур.

@@ -26,7 +26,10 @@ async def main() -> int:
             max_repairs=args.max_repairs,
         )
         result["provider"] = args.provider
-        result["model"] = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        if args.provider in {"local", "vllm", "openai_compatible"}:
+            result["model"] = os.environ.get("LOCAL_LLM_MODEL", "")
+        else:
+            result["model"] = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
         write_json_atomic(args.output, result)
         print(
             f"benchmark: cases={result['cases']}, executable={result['executable_rate']:.1%}, "

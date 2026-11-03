@@ -81,3 +81,20 @@ def test_unsafe_or_invalid_dsl_is_rejected(source):
 def test_malformed_function_ast_does_not_crash_normalizer():
     with pytest.raises(ModelValidationError, match="expects between 3 and 3"):
         normalize_expression({"op": "if_then_else", "args": [{"op": "time"}]})
+
+
+def test_zero_literals_gain_explicit_units_without_changing_values():
+    conditional = normalize_expression("if_then_else(time >= 60, recruitment, 0)")
+    assert conditional["otherwise"]["op"] == "mul"
+    assert conditional["otherwise"]["args"][0] == {"op": "lit", "value": 0}
+    assert conditional["otherwise"]["args"][1] == {"op": "ref", "name": "recruitment"}
+
+    minimum = normalize_expression("min(0, inventory)")
+    assert minimum["args"][0]["op"] == "mul"
+    comparison = normalize_expression("inventory > 0")
+    assert comparison["args"][1]["op"] == "mul"
+
+
+def test_numeric_expressions_are_folded_to_literals():
+    assert normalize_expression("1 / 10") == {"op": "lit", "value": 0.1}
+    assert normalize_expression("100 * 2 + 20") == {"op": "lit", "value": 220}
