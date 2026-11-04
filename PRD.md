@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core 0.2.1, backend и frontend реализованы и проверены; local benchmark 26×3 завершён, но quality targets не достигнуты; production release не выполнен
+**Статус:** generation_core 0.2.2, backend и frontend реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -507,3 +507,18 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
 - HTTP orchestration: `../piratepitch/backend/app/clients/generator.py`, `generations/tasks.py`.
 - Compose и разделение БД/Redis: `../piratepitch/docker-compose.yml`.
 - Frontend conventions: `../piratepress/frontend/AGENTS.md`, `../piratepitch/frontend/AGENTS.md`.
+
+## 17. Validation hardening после 0.2.1
+
+- Исходный local benchmark 26×3 на предыдущей итерации: executable/semantic/behavior 92,3% (`generation_core/out/benchmark-local-26x3-v4.json`). Это не свежий GPU-прогон текущего кода.
+- Первый OpenRouter validation 16×3 на `qwen/qwen3-30b-a3b-instruct-2507`: 72,9%/72,9%/66,7%; выявлены transport errors, units errors, undeclared id и численная нестабильность. Валидаторы и behavior-oracles не ослаблялись.
+- Добавлены bounded network retries, компактные DSL equations для pattern на generation/repair-стадиях, явные units diagnostics и нормализация однозначных assumption paths. Каждый завершённый benchmark-case сохраняет собственный `case.json`.
+- Targeted validation семи ранее проблемных archetypes: 7/7 executable, semantic и behavior; SIRS даёт четыре волны, Lorenz и Duffing используют заданные устойчивые timestep/horizon.
+- Полный validation v9 завершён: executable 83,3%, semantic 83,3%, behavior 79,2%; targets не достигнуты. По сохранённым responses исправлены незапрошенный monetary budget в Bass, equilibrium defaults, supply/bullwhip repair, а также DSL aliases `Time` и `IF THEN ELSE(...)`.
+- Targeted v10 пяти дополнительных проблемных archetypes: 5/5 executable, semantic и behavior. Добавлена ранняя проверка undeclared stock endpoints; targeted savings v12 — 1/1 без repairs.
+- ModelBrief тоже проверяется на незапрошенные monetary inputs: targeted Bass/inventory v13 — 2/2; Bass потребовал два ранних repairs, после которых получил корректные fractional rates. Полный v11: 85,4% executable, 85,4% semantic, 83,3% behavior — targets не достигнуты.
+- Confirmation v12 завершён: 81,25% по всем метрикам; targets не достигнуты. Добавлены anti-loop instructions и truncation diagnostics; targeted SIR v14 — 1/1 без repairs.
+- Новые нормированные Lorenz/VDP/Duffing используют equations из validated pattern с archetype-provenance, без повторного LLM-вывода; explicit physical models и редактирование сохраняют LLM path. Targeted oscillators v16 — 3/3.
+- Исходный OpenRouter 26×3: 94,87% executable/semantic/behavior. Confirmation v16: 95,83% executable, 95,83% semantic, 93,75% behavior. Validation v13: 100% по всем метрикам. Targets превышены на всех трёх corpus; targeted Lorenz после brief-subset исправления — 1/1 без repairs.
+- Локальная 30B (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, RTX 5090, concurrency=1): исходный 26×3 — 98,7% по всем метрикам; held-out 16×3 — 97,9% executable/semantic и 95,8% behavior. Pipeline hash обоих отчётов — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
+- Проверки: 143 core tests, 20 backend tests, 12 frontend tests, 2/2 browser E2E; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. Local quality gate пройден; production deployment не выполнялся.

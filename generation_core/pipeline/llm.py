@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -80,6 +81,8 @@ class OpenAICompatibleLLM:
         structured_output: bool = True,
         allow_unstructured_fallback: bool = False,
         max_tokens: int = 8192,
+        request_retries: int = 2,
+        retry_delay: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
@@ -87,6 +90,8 @@ class OpenAICompatibleLLM:
         self.structured_output = structured_output
         self.allow_unstructured_fallback = allow_unstructured_fallback
         self.max_tokens = max_tokens
+        self.request_retries = max(0, request_retries)
+        self.retry_delay = retry_delay
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = httpx.AsyncClient(
             base_url=base_url,
@@ -125,15 +130,30 @@ class OpenAICompatibleLLM:
                     "schema": strict_json_schema(response_schema),
                 },
             }
+
+        async def post() -> httpx.Response:
+            for attempt in range(self.request_retries + 1):
+                try:
+                    response = await self._client.post("/chat/completions", json=payload)
+                except httpx.HTTPError:
+                    if attempt >= self.request_retries:
+                        raise
+                else:
+                    transient = response.status_code in {408, 409, 425, 429} or response.status_code >= 500
+                    if not transient or attempt >= self.request_retries:
+                        return response
+                await asyncio.sleep(self.retry_delay * (2**attempt))
+            raise AssertionError("unreachable")
+
         try:
-            response = await self._client.post("/chat/completions", json=payload)
+            response = await post()
             if (
                 response.is_error
                 and response_schema is not None
                 and self.allow_unstructured_fallback
             ):
                 payload.pop("response_format", None)
-                response = await self._client.post("/chat/completions", json=payload)
+                response = await post()
             if response.is_error:
                 raise LLMError(
                     f"{self.provider_name} HTTP {response.status_code} at stage {stage}: "
@@ -146,10 +166,26 @@ class OpenAICompatibleLLM:
                     f"{self.provider_name} returned invalid response JSON at stage {stage}",
                     response_text=response.text[:6000],
                 ) from exc
-            content = body["choices"][0]["message"]["content"]
-            if not isinstance(content, str):
-                raise LLMError(f"{self.provider_name} returned non-text content at stage {stage}")
-            return parse_json_response(content)
+            choice = body["choices"][0]
+            content = choice["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                finish_reason = choice.get("finish_reason", "unknown")
+                raise LLMResponseError(
+                    f"{self.provider_name} returned empty content at stage {stage}; "
+                    f"finish_reason={finish_reason}",
+                    response_text=content if isinstance(content, str) else "",
+                )
+            try:
+                return parse_json_response(content)
+            except LLMResponseError as exc:
+                if choice.get("finish_reason") == "length":
+                    raise LLMResponseError(
+                        f"{self.provider_name} response truncated at stage {stage}: "
+                        f"finish_reason=length, max_tokens={self.max_tokens}. "
+                        "Return concise JSON without repeated assumptions.",
+                        response_text=exc.response_text,
+                    ) from exc
+                raise
         except LLMError:
             raise
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:

@@ -9,6 +9,62 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.2.2 — 2026-11-04
+
+Устойчивость генерации и воспроизводимая оценка на расширенных corpus.
+
+- **Structured generation**: non-null initial обязателен не только у stock, но и у constant;
+  нулевые значения сохраняются; stock определяется также по flow endpoints, а значения
+  constants сохраняются между стадиями.
+  Пустой assumption.value восстанавливается только из явно заданного значения переменной.
+- **Нормализация и форматы**: поддержаны wrapper calls, bracketed arguments, JSON-string AST,
+  числовые shorthand `lit`, `DELAY1I/DELAY3I/SMOOTHI/SMOOTH3I` и Vensim boolean `MIN/MAX`.
+  Исправлены соответствующие Vensim/XMILE round-trips и time defaults при repair.
+- **Проверка качества**: smoke проходит полный горизонт, статические supply-delay модели
+  отклоняются; units, topology и semantic validators не ослаблены. Bass diffusion требует
+  potential adopters и word-of-mouth, а не только согласованные units.
+- **Archetype selection**: добавлены предметные признаки естественных описаний; все 58
+  описаний в исходном, validation и confirmation corpus выбирают ожидаемый archetype.
+  Pattern передаёт initial, units, time и проверенные уравнения в коротком DSL на generation
+  и repair-стадиях, вместо громоздкого AST и неявного угадывания коэффициентов.
+- **Воспроизводимость benchmark**: сохраняются prompt и успешные raw LLM responses до parsing;
+  прежние JSON-стадии повторяемого case очищаются. Отчёт содержит provider/model,
+  structured-output settings, max repairs, concurrency, SHA-256 corpus и pipeline.
+- **Пропускная способность**: опциональный `--concurrency` ограничивает одновременные запросы
+  без изменения порядка результатов. Значение по умолчанию — 1 для локального inference.
+- **Structural repair**: пропущенные variables сохраняются; при units-only ошибках
+  kinds и topology не меняются, а при topology-ошибках можно восстановить constant.
+  Undeclared ids отклоняются на equations-стадии, не доходя до полного repair.
+- **Provider resilience**: network errors, HTTP 408/409/425/429 и 5xx получают ограниченные
+  exponential-backoff retries; клиентские schema errors не повторяются автоматически.
+  Пустой LLM content возвращает диагностику с finish_reason вместо непонятного KeyError.
+- **Диагностика и артефакты**: units errors содержат операцию и размерности операндов;
+  однозначные shorthand assumption paths сохраняют явно заданные initial/expression.
+  Каждый завершённый benchmark-case отдельно сохраняет `case.json` до общего отчёта.
+- **Domain hardening**: Bass отклоняет незапрошенный monetary budget на variables-стадии;
+  equilibrium по умолчанию не подставляется в dynamic archetypes. Добавлены DSL aliases
+  `Time` и `IF THEN ELSE(...)`, точные units diagnostics и проверенные supply/bullwhip repairs.
+- **Canonical normalized patterns**: новые Lorenz/VDP/Duffing без explicit physical
+  parameters используют equations из validated pattern вместо повторного LLM-вывода;
+  initial/constants сохраняются, archetype-provenance явный. Это устраняет потерю
+  размерных коэффициентов и выдуманные physical ids. Targeted oscillators v16 — 3/3.
+- **Проверки**: 143 core tests, 20 backend tests, 12 frontend tests, 2/2 browser E2E,
+  Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. Полный v9:
+  83,3%/83,3%/79,2%; v11: 85,4%/85,4%/83,3%; confirmation v12: 81,25% по всем метрикам —
+  targets не достигнуты на тех baselines. Исходный OpenRouter 26×3: 94,87% по всем
+  метрикам; confirmation v16: 95,83% executable, 95,83% semantic, 93,75% behavior —
+  targets превышены. Validation v13: 100% по всем метрикам. Targeted SIR v14 — 1/1 без
+  repairs; targeted Lorenz после разрешения subset exogenous inputs — 1/1 без repairs.
+  Прогоны выполнены на OpenRouter 30B без GPU и затем подтверждены на локальной 30B.
+- **Local acceptance**: `QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ` на RTX 5090, concurrency=1,
+  pipeline `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
+  Исходный 26×3: 98,7% по всем метрикам, average 16,49 с; held-out 16×3:
+  97,9% executable/semantic и 95,8% behavior, average 17,831 с. Температура под нагрузкой
+  не превысила 74°C, после завершения GPU простаивает.
+- **Остаточные ограничения**: отдельные LLM-ответы используют unsupported `divide`;
+  корректное статическое равновесие не засчитывается как dynamic behavior. Эти случаи не
+  скрыты и не привели к ослаблению validators; обязательные пороги всё равно превышены.
+
 ## 0.2.1 — 2026-11-03
 
 Устойчивость repair и проверенный локальный inference на RTX 5090.

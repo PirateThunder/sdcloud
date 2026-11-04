@@ -28,6 +28,14 @@ def test_normalizes_observed_llm_shorthands():
     }
 
 
+def test_vensim_time_alias_is_normalized_in_dsl_and_ast():
+    assert parse_expression("Time").op == "time"
+    assert normalize_expression({"op": "ref", "name": "Time"}) == {"op": "time"}
+    conditional = parse_expression("IF THEN ELSE(Time >= 10, high_demand, base_demand)")
+    assert isinstance(conditional, IfExpression)
+    assert conditional.condition.args[0].op == "time"
+
+
 def test_ast_like_dsl_from_repair_is_normalized_without_eval():
     expression = parse_expression(
         "mul(div(mul(ref('base_contact_rate'), ref('susceptible')), "
@@ -98,3 +106,29 @@ def test_zero_literals_gain_explicit_units_without_changing_values():
 def test_numeric_expressions_are_folded_to_literals():
     assert normalize_expression("1 / 10") == {"op": "lit", "value": 0.1}
     assert normalize_expression("100 * 2 + 20") == {"op": "lit", "value": 220}
+
+
+def test_delay_and_smooth_accept_optional_initial_value():
+    for name in ("delay1", "delay3", "smooth", "smooth3"):
+        expression = normalize_expression(f"{name}(input, delay_time, 0)")
+        assert expression["op"] == "call"
+        assert expression["name"] == f"{name}i"
+        assert len(expression["args"]) == 3
+
+
+def test_quoted_numeric_literal_is_normalized():
+    assert normalize_expression("lit('0.1')") == {"op": "lit", "value": 0.1}
+
+
+def test_ast_call_shorthands_are_normalized():
+    assert normalize_expression("lit(-1.0)") == {"op": "lit", "value": -1.0}
+    delay = normalize_expression("call(delay3, ref(order_rate), ref(delay_time))")
+    assert delay["name"] == "delay3"
+    assert len(delay["args"]) == 2
+    cosine = normalize_expression("call(cos, [mul(omega, time)])")
+    assert cosine["name"] == "cos"
+    assert cosine["args"][0]["op"] == "mul"
+
+
+def test_json_string_ast_is_normalized_without_eval():
+    assert normalize_expression('{"op":"lit","value":0.1}') == {"op": "lit", "value": 0.1}

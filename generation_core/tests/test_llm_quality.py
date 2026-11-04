@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -65,6 +66,25 @@ def test_invalid_death_flow_is_a_semantic_error():
     document = document.model_copy(update={"variables": variables})
     codes = {item.code for item in semantic_issues(document)}
     assert "INVALID_DEATH_FLOW" in codes
+
+
+def test_bass_semantics_require_potential_adopters_and_word_of_mouth():
+    from pipeline.expression_parser import parse_expression
+
+    document = get_pattern("bass_diffusion").document.model_copy(
+        update={"pattern_id": "bass_diffusion"}
+    )
+    assert not semantic_issues(document)
+    for expression, expected in (
+        ("adopters * imitation", "SEMANTIC_BASS_POTENTIAL_MISSING"),
+        ("potential_adopters * innovation", "SEMANTIC_BASS_WORD_OF_MOUTH_MISSING"),
+    ):
+        variables = [item.model_dump() for item in document.variables]
+        for item in variables:
+            if item["id"] == "adoption":
+                item["expression"] = parse_expression(expression)
+        candidate = document.model_copy(update={"variables": variables})
+        assert expected in {item.code for item in semantic_issues(candidate)}
 
 
 async def test_bounded_repairs_invalid_generation():
@@ -142,3 +162,120 @@ async def test_benchmark_offline():
     assert result["finite_rate"] == 1
     assert result["full_horizon_rate"] == 1
     assert result["results"][0]["repair_attempts"] == 0
+
+
+async def test_benchmark_accepts_custom_prompt_file(tmp_path):
+    from pipeline.benchmark import run_benchmark
+    from pipeline.llm import FixtureLLM
+
+    path = tmp_path / "prompts.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "custom_predator",
+                    "description": "Модель хищник-жертва: кролики и лисы",
+                    "expected_pattern": "predator_prey",
+                }
+            ]
+        )
+    )
+    result = await run_benchmark(
+        FixtureLLM(FIXTURE),
+        prompts_path=path,
+        artifacts_dir=tmp_path / "artifacts",
+        max_repairs=0,
+    )
+    assert result["cases"] == 1
+    assert result["results"][0]["prompt_id"] == "custom_predator"
+    assert result["behavior_rate"] == 1
+    assert result["max_repairs"] == 0
+    assert len(result["corpus_sha256"]) == 64
+    assert len(result["pipeline_sha256"]) == 64
+    workdir = tmp_path / "artifacts" / "custom_predator-run-1"
+    assert (workdir / "model.json").exists()
+    assert (workdir / "simulation.json").exists()
+    prompt = json.loads((workdir / "prompt.json").read_text())
+    assert prompt["description"] == "Модель хищник-жертва: кролики и лисы"
+    persisted_case = json.loads((workdir / "case.json").read_text())
+    assert persisted_case["executable"] is True
+    assert persisted_case["behavior_pass"] is True
+    assert persisted_case["duration_seconds"] >= 0
+    stale = workdir / "variables_repair_3.json"
+    stale.write_text("{}")
+    unrelated = workdir / "keep.txt"
+    unrelated.write_text("keep")
+    await run_benchmark(
+        FixtureLLM(FIXTURE),
+        prompts_path=path,
+        artifacts_dir=tmp_path / "artifacts",
+        max_repairs=0,
+    )
+    assert not stale.exists()
+    assert unrelated.read_text() == "keep"
+
+
+async def test_benchmark_persists_failed_case_result(tmp_path):
+    from pipeline.benchmark import run_benchmark
+    from pipeline.llm import FixtureLLM
+
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "failed_case",
+                    "description": "A model that cannot be generated",
+                    "expected_pattern": "exponential_growth",
+                }
+            ]
+        )
+    )
+    fixture = tmp_path / "empty_fixture.json"
+    fixture.write_text("{}")
+    artifacts = tmp_path / "artifacts"
+    result = await run_benchmark(
+        FixtureLLM(fixture),
+        prompts_path=prompts,
+        artifacts_dir=artifacts,
+        max_repairs=0,
+    )
+    case = json.loads((artifacts / "failed_case-run-1" / "case.json").read_text())
+    assert result["executable_rate"] == 0
+    assert case["executable"] is False
+    assert "has no response for stage brief" in case["error"]
+    assert case["duration_seconds"] >= 0
+
+
+async def test_benchmark_concurrency_preserves_result_order(tmp_path):
+    from pipeline.benchmark import run_benchmark
+    from pipeline.llm import FixtureLLM
+
+    class DelayedFixture(FixtureLLM):
+        active = 0
+        maximum_active = 0
+
+        async def chat_json(self, *args, **kwargs):
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                return await super().chat_json(*args, **kwargs)
+            finally:
+                self.active -= 1
+
+    prompts = [
+        {
+            "id": name,
+            "description": "Модель хищник-жертва: кролики и лисы",
+            "expected_pattern": "predator_prey",
+        }
+        for name in ("first", "second")
+    ]
+    path = tmp_path / "prompts.json"
+    path.write_text(json.dumps(prompts))
+    llm = DelayedFixture(FIXTURE)
+    result = await run_benchmark(llm, prompts_path=path, concurrency=2, max_repairs=0)
+    assert llm.maximum_active == 2
+    assert result["concurrency"] == 2
+    assert [case["prompt_id"] for case in result["results"]] == ["first", "second"]

@@ -126,3 +126,91 @@ def test_stateful_and_lookup_round_trips():
             result = simulate_model(loaded, SimulationParameters())
             for name, values in expected.variables.items():
                 assert result.variables[name] == pytest.approx(values, abs=1e-7)
+
+
+def test_delay_and_smooth_initial_value_argument_executes():
+    from pipeline.expression_parser import normalize_expression
+    from pipeline.schemas import CallExpression, LiteralExpression
+
+    document = import_vensim((MODELS / "delay.mdl").read_text(encoding="utf-8"))
+    variables = []
+    for item in document.variables:
+        if item.id in {"output_delay1", "output_delay3", "smooth_output"}:
+            expression = item.expression
+            expression = expression.model_copy(
+                update={"args": [*expression.args, LiteralExpression(op="lit", value=0)]}
+            )
+            expression = CallExpression.model_validate(
+                normalize_expression(expression.model_dump(mode="json"))
+            )
+            item = item.model_copy(update={"expression": expression})
+        variables.append(item)
+    document = document.model_copy(update={"variables": variables})
+    result = simulate_model(document, SimulationParameters())
+    assert all(math.isfinite(value) for series in result.variables.values() for value in series)
+    for exporter, loader in ((export_vensim, import_vensim), (export_xmile, import_xmile)):
+        roundtripped = loader(exporter(document))
+        roundtrip_result = simulate_model(roundtripped, SimulationParameters())
+        for name, values in result.variables.items():
+            assert roundtrip_result.variables[name] == pytest.approx(values, abs=1e-7)
+
+
+def test_boolean_conditions_use_vensim_min_max():
+    from pipeline.codegen import generate_python_code
+    from pipeline.expression_parser import parse_expression
+    from pipeline.schemas import AuxiliaryVariable, ModelDocument, StockVariable, TimeSettings
+
+    document = ModelDocument(
+        name="Boolean conditions",
+        description="Boolean condition code generation",
+        time=TimeSettings(unit="time", final_time=200, time_step=0.01, saveper=0.05),
+        variables=[
+            StockVariable(id="x", kind="stock", initial=parse_expression("0"), units={}),
+            AuxiliaryVariable(
+                id="switch_and",
+                kind="auxiliary",
+                units={},
+                expression=parse_expression(
+                    "if(and(gt(time,lit(50.0)),lt(time,lit(100.0))),lit(1.0),lit(0.0))"
+                ),
+            ),
+            AuxiliaryVariable(
+                id="switch_or",
+                kind="auxiliary",
+                units={},
+                expression=parse_expression(
+                    "if(or(gt(time,lit(50.0)),lt(time,lit(100.0))),lit(1.0),lit(0.0))"
+                ),
+            ),
+        ],
+    )
+    code = generate_python_code(document)
+    assert "np.minimum(" in code
+    assert "np.maximum(" in code
+    assert " AND " not in code
+    assert " OR " not in code
+
+
+def test_units_diagnostics_include_operation_and_operand_units():
+    from pipeline.expression_parser import parse_expression
+    from pipeline.schemas import AuxiliaryVariable
+    from pipeline.validation import finalize_model
+
+    document = exponential_model()
+    auxiliary = AuxiliaryVariable(
+        id="invalid_sum",
+        kind="auxiliary",
+        units={},
+        expression=parse_expression("population + growth_rate"),
+    )
+    result = finalize_model(
+        document.model_copy(update={"variables": [*document.variables, auxiliary]})
+    )
+    issue = next(
+        item
+        for item in result.validation.issues
+        if item.code == "INCOMPATIBLE_UNITS" and item.path == "variables.invalid_sum.expression"
+    )
+    assert "add operands" in issue.message
+    assert "left={'person': 1}" in issue.message
+    assert "right={'year': -1}" in issue.message

@@ -1,0 +1,18 @@
+[
+  {"id": "confirm_exponential_bacteria", "description": "A bacterial colony with abundant nutrients grows at a constant fractional rate, with no harvesting or mortality.", "expected_pattern": "exponential_growth"},
+  {"id": "confirm_logistic_seats", "description": "Рост числа абонентов спортзала постепенно замедляется по мере приближения к фиксированной вместимости зала.", "expected_pattern": "logistic_growth"},
+  {"id": "confirm_teacup_coffee", "description": "Freshly brewed coffee in a ceramic mug cools toward room temperature at a rate proportional to their temperature difference.", "expected_pattern": "teacup_cooling"},
+  {"id": "confirm_sir_boarding_school", "description": "At a boarding school, susceptible pupils catch norovirus from infectious pupils and later recover with lasting immunity.", "expected_pattern": "sir_epidemic"},
+  {"id": "confirm_predator_owls", "description": "Field mice reproduce in a meadow, owls consume mice and reproduce through successful feeding, and owls also die naturally.", "expected_pattern": "predator_prey"},
+  {"id": "confirm_bass_language_app", "description": "A language-learning app reaches a finite market through both advertising and recommendations from adopters to people who have not joined yet.", "expected_pattern": "bass_diffusion"},
+  {"id": "confirm_inventory_warehouse", "description": "A warehouse manager replenishes stock toward a desired safety level while customer shipments continuously remove products.", "expected_pattern": "inventory"},
+  {"id": "confirm_workforce_nurses", "description": "A hospital recruits junior nurses who gain experience and become senior nurses; senior nurses eventually resign.", "expected_pattern": "workforce"},
+  {"id": "confirm_supply_roastery", "description": "A coffee roastery receives bean orders only after an eight-week delivery delay, while roasting steadily consumes its bean inventory.", "expected_pattern": "supply_delay"},
+  {"id": "confirm_renewable_lake", "description": "A managed lake fish stock regenerates toward its environmental carrying capacity while fishing removes a fixed fraction each year.", "expected_pattern": "renewable_resource"},
+  {"id": "confirm_sirs_community", "description": "A seasonal respiratory illness spreads through a community; recovered residents gradually lose immunity and become susceptible again, causing repeated waves.", "expected_pattern": "sirs_epidemic", "expected_behavior": "repeated_waves"},
+  {"id": "confirm_bullwhip_toys", "description": "A toy retailer responds to a sudden holiday demand increase with delayed supplier deliveries and amplifies its purchasing orders.", "expected_pattern": "supply_chain_bullwhip", "expected_behavior": "bullwhip"},
+  {"id": "confirm_student_debate", "description": "Студенческий дебат-клуб имеет ограниченную вместимость, выгорание участников и дополнительную кампанию приглашения после 60-й недели.", "expected_pattern": "student_club", "expected_behavior": "campaign_wave"},
+  {"id": "confirm_lorenz_convection", "description": "A three-variable Lorenz convection system with a butterfly attractor exhibits chaotic changes between its two lobes.", "expected_pattern": "lorenz_system", "expected_behavior": "chaotic_sign_changes"},
+  {"id": "confirm_vdp_circuit", "description": "A nonlinear Van der Pol electrical circuit exhibits a sustained relaxation limit cycle.", "expected_pattern": "van_der_pol_oscillator", "expected_behavior": "limit_cycle"},
+  {"id": "confirm_duffing_beam", "description": "A periodically forced magnetoelastic beam follows the Duffing equation and irregularly switches between two stable potential wells.", "expected_pattern": "duffing_oscillator", "expected_behavior": "two_wells"}
+]

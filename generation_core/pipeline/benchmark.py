@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import math
 import time
 from pathlib import Path
 
 from .generation import generate_model
+from .io import write_json_atomic
 from .llm import LLMClient
+from .naming import identifier
 from .schemas import GenerationRequest, SimulationParameters
 from .semantics import semantic_issues
 from .simulation import simulate_model
@@ -14,8 +18,8 @@ from .simulation import simulate_model
 PROMPTS_PATH = Path(__file__).with_name("benchmark_prompts.json")
 
 
-def load_prompts() -> list[dict]:
-    return json.loads(PROMPTS_PATH.read_text(encoding="utf-8"))
+def load_prompts(path: Path | None = None) -> list[dict]:
+    return json.loads((path or PROMPTS_PATH).read_text(encoding="utf-8"))
 
 
 def _sign_changes(series: list[float]) -> int:
@@ -82,18 +86,36 @@ async def run_benchmark(
     *,
     runs: int = 1,
     prompt_ids: list[str] | None = None,
+    prompts_path: Path | None = None,
+    artifacts_dir: Path | None = None,
     max_repairs: int = 2,
+    concurrency: int = 1,
 ) -> dict:
-    prompts = load_prompts()
+    if not 1 <= concurrency <= 8:
+        raise ValueError("concurrency must be between 1 and 8")
+    corpus_path = prompts_path or PROMPTS_PATH
+    prompts = load_prompts(corpus_path)
+    source_hash = hashlib.sha256()
+    source_root = Path(__file__).parent
+    for path in sorted(source_root.rglob("*.py")):
+        source_hash.update(path.relative_to(source_root).as_posix().encode())
+        source_hash.update(b"\0")
+        source_hash.update(path.read_bytes())
     if prompt_ids:
         allowed = set(prompt_ids)
         prompts = [item for item in prompts if item["id"] in allowed]
     if not prompts:
         raise ValueError("benchmark has no prompts to run")
-    cases = []
-    for prompt in prompts:
-        for run in range(runs):
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def run_case(prompt: dict, run: int) -> dict:
+        async with semaphore:
             started = time.monotonic()
+            workdir = (
+                artifacts_dir / f"{identifier(prompt['id'])}-run-{run + 1}"
+                if artifacts_dir is not None
+                else None
+            )
             case = {
                 "prompt_id": prompt["id"],
                 "run": run + 1,
@@ -109,10 +131,17 @@ async def run_benchmark(
                 "graph_pass": False,
                 "repair_attempts": 0,
             }
+            if workdir is not None:
+                workdir.mkdir(parents=True, exist_ok=True)
+                for path in workdir.glob("*.json"):
+                    path.unlink()
+                write_json_atomic(workdir / "prompt.json", prompt)
+                case["artifacts"] = str(workdir)
             try:
                 document = await generate_model(
                     GenerationRequest(description=prompt["description"]),
                     llm,
+                    workdir=workdir,
                     max_repairs=max_repairs,
                 )
                 parameters = SimulationParameters(
@@ -122,6 +151,9 @@ async def run_benchmark(
                     saveper=document.time.saveper,
                 )
                 result = simulate_model(document, parameters)
+                if workdir is not None:
+                    write_json_atomic(workdir / "model.json", document.model_dump(mode="json"))
+                    write_json_atomic(workdir / "simulation.json", result.model_dump(mode="json"))
                 case["executable"] = True
                 case["repair_attempts"] = document.repair_attempts
                 case["finite"] = all(
@@ -166,12 +198,27 @@ async def run_benchmark(
             except Exception as exc:
                 case["repair_attempts"] = getattr(exc, "repair_attempts", 0)
                 case["error"] = str(exc)[:2000]
-            case["duration_seconds"] = round(time.monotonic() - started, 3)
-            cases.append(case)
+                if workdir is not None:
+                    write_json_atomic(
+                        workdir / "error.json",
+                        {"type": type(exc).__name__, "error": case["error"]},
+                    )
+            finally:
+                case["duration_seconds"] = round(time.monotonic() - started, 3)
+                if workdir is not None:
+                    write_json_atomic(workdir / "case.json", case)
+            return case
+
+    jobs = [(prompt, run) for prompt in prompts for run in range(runs)]
+    cases = await asyncio.gather(*(run_case(prompt, run) for prompt, run in jobs))
     total = len(cases)
     return {
         "schema_version": "2.0",
         "kind": "llm_benchmark",
+        "max_repairs": max_repairs,
+        "concurrency": concurrency,
+        "corpus_sha256": hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
+        "pipeline_sha256": source_hash.hexdigest(),
         "prompts": len(prompts),
         "runs_per_prompt": runs,
         "cases": total,

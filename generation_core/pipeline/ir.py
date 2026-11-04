@@ -48,8 +48,12 @@ FUNCTION_SIGNATURES: dict[str, tuple[int, int]] = {
     "ramp": (2, 3),
     "delay1": (2, 2),
     "delay3": (2, 2),
+    "delay1i": (3, 3),
+    "delay3i": (3, 3),
     "smooth": (2, 2),
     "smooth3": (2, 2),
+    "smoothi": (3, 3),
+    "smooth3i": (3, 3),
     "initial": (1, 1),
 }
 
@@ -133,9 +137,9 @@ def expression_capabilities(expression: Expression) -> set[str]:
         elif isinstance(node, CallExpression):
             if node.name in {"step", "pulse", "pulse_train", "ramp"}:
                 capabilities.add("events")
-            elif node.name in {"delay1", "delay3"}:
+            elif node.name in {"delay1", "delay3", "delay1i", "delay3i"}:
                 capabilities.add("delay")
-            elif node.name in {"smooth", "smooth3"}:
+            elif node.name in {"smooth", "smooth3", "smoothi", "smooth3i"}:
                 capabilities.add("smooth")
             elif node.name == "initial":
                 capabilities.add("initial")

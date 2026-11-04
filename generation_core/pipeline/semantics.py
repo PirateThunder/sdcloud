@@ -92,6 +92,37 @@ def _sirs_issues(document: ModelDocument) -> list[ValidationIssue]:
     return issues
 
 
+def _bass_issues(document: ModelDocument) -> list[ValidationIssue]:
+    adoption = [
+        flow
+        for flow in document.variables
+        if flow.kind == "flow"
+        and flow.source
+        and flow.target
+        and flow.source.kind == "stock"
+        and flow.target.kind == "stock"
+        and flow.source.id != flow.target.id
+        and flow.source.id in dependencies(flow.expression)
+    ]
+    if not adoption:
+        return [
+            _issue(
+                "SEMANTIC_BASS_POTENTIAL_MISSING",
+                "variables",
+                "Bass adoption must depend on potential adopters",
+            )
+        ]
+    if not any(flow.target.id in dependencies(flow.expression) for flow in adoption):
+        return [
+            _issue(
+                "SEMANTIC_BASS_WORD_OF_MOUTH_MISSING",
+                "variables",
+                "Bass word-of-mouth adoption must depend on both potential adopters and adopters",
+            )
+        ]
+    return []
+
+
 def semantic_issues(document: ModelDocument) -> list[ValidationIssue]:
     document = ModelDocument.model_validate(document.model_dump())
     issues = []
@@ -158,8 +189,24 @@ def semantic_issues(document: ModelDocument) -> list[ValidationIssue]:
                         "predator-prey model needs predator growth driven by prey or predation",
                     )
                 )
+    if document.pattern_id == "bass_diffusion":
+        issues.extend(_bass_issues(document))
     if document.pattern_id == "sirs_epidemic":
         issues.extend(_sirs_issues(document))
+    if document.pattern_id == "supply_delay":
+        has_delay = any(
+            isinstance(node, CallExpression) and node.name in {"delay1", "delay3", "delay1i", "delay3i"}
+            for flow in flows
+            for node in walk(flow.expression)
+        )
+        if not has_delay:
+            issues.append(
+                _issue(
+                    "SEMANTIC_SUPPLY_DELAY_MISSING",
+                    "variables",
+                    "supply-delay model needs at least one delay1/delay3 flow",
+                )
+            )
     return issues
 
 

@@ -1,0 +1,18 @@
+[
+  {"id": "holdout_exponential_savings", "description": "A savings account grows by continuous compound interest with a fixed annual rate and no withdrawals or fees.", "expected_pattern": "exponential_growth"},
+  {"id": "holdout_logistic_users", "description": "Число пользователей региональной сети сначала растёт быстро, а затем стабилизируется около предельной ёмкости инфраструктуры.", "expected_pattern": "logistic_growth"},
+  {"id": "holdout_teacup_metal", "description": "A heated metal part cools in still air with heat loss proportional to the difference between its temperature and the room temperature.", "expected_pattern": "teacup_cooling"},
+  {"id": "holdout_sir_school", "description": "В школе начинается вспышка гриппа: восприимчивые ученики заражаются при контакте с больными, а затем выздоравливают и получают иммунитет.", "expected_pattern": "sir_epidemic"},
+  {"id": "holdout_predator_wolves", "description": "Wolves and deer live in a reserve; deer reproduce, wolves consume deer, and wolves die naturally.", "expected_pattern": "predator_prey"},
+  {"id": "holdout_bass_app", "description": "A mobile app spreads through paid advertising and recommendations from existing users to potential users.", "expected_pattern": "bass_diffusion"},
+  {"id": "holdout_inventory_store", "description": "A bookstore replenishes inventory toward a target level while daily customer purchases reduce the number of books in stock.", "expected_pattern": "inventory"},
+  {"id": "holdout_workforce_academy", "description": "A consulting firm hires trainees who gradually become experienced consultants, while experienced consultants eventually leave the company.", "expected_pattern": "workforce"},
+  {"id": "holdout_supply_brewery", "description": "A brewery receives ingredient orders after a six-week shipping delay while continuous beer sales deplete ingredient inventory.", "expected_pattern": "supply_delay"},
+  {"id": "holdout_renewable_deer", "description": "A deer population regenerates toward the habitat carrying capacity while a fixed fractional hunting quota removes animals each year.", "expected_pattern": "renewable_resource"},
+  {"id": "holdout_sirs_waves", "description": "An illness grants only temporary immunity; recovering people become susceptible again and seasonal contact rates produce recurring epidemic waves.", "expected_pattern": "sirs_epidemic", "expected_behavior": "repeated_waves"},
+  {"id": "holdout_bullwhip_electronics", "description": "An electronics distributor reacts to a step increase in customer demand with shipping delays and amplifies orders to suppliers.", "expected_pattern": "supply_chain_bullwhip", "expected_behavior": "bullwhip"},
+  {"id": "holdout_student_research", "description": "Студенты создают научный клуб с ограниченной вместимостью, выгоранием участников и новой кампанией по набору после 60-й недели.", "expected_pattern": "student_club", "expected_behavior": "campaign_wave"},
+  {"id": "holdout_lorenz_atmosphere", "description": "A Lorenz atmospheric convection model has three coupled variables and a chaotic butterfly attractor.", "expected_pattern": "lorenz_system", "expected_behavior": "chaotic_sign_changes"},
+  {"id": "holdout_vdp_electronic", "description": "An electronic Van der Pol oscillator with nonlinear damping settles into a relaxation limit cycle.", "expected_pattern": "van_der_pol_oscillator", "expected_behavior": "limit_cycle"},
+  {"id": "holdout_duffing_magnet", "description": "A periodically driven Duffing oscillator moves irregularly between two potential wells instead of settling in either one.", "expected_pattern": "duffing_oscillator", "expected_behavior": "two_wells"}
+]

@@ -23,6 +23,29 @@ def test_archetype_selection_and_validation(expected, prompt):
     assert not [issue for issue in pattern.document.validation.issues if issue.severity == "error"]
 
 
+def test_predator_equilibrium_is_valid_but_does_not_satisfy_dynamic_behavior():
+    from pipeline.ir import lit
+    from pipeline.semantics import semantic_issues
+
+    document = get_pattern("predator_prey").document.model_copy(
+        update={"pattern_id": "predator_prey"}
+    )
+    variables = []
+    for variable in document.variables:
+        if variable.id == "prey":
+            variable = variable.model_copy(update={"initial": lit(50)})
+        elif variable.id == "predators":
+            variable = variable.model_copy(update={"initial": lit(5)})
+        variables.append(variable)
+    document = document.model_copy(update={"variables": variables})
+    assert not semantic_issues(document)
+    result = simulate_model(document, SimulationParameters())
+    assert_finite(result)
+    for stock_id in ("prey", "predators"):
+        series = result.variables[stock_id]
+        assert max(series) - min(series) < 1e-9
+
+
 def adaptive_parameters() -> SimulationParameters:
     return SimulationParameters(
         engine="scipy", integration_method="dop853", rtol=1e-9, atol=1e-12
@@ -54,6 +77,14 @@ def test_supply_chain_amplifies_demand_step():
     assert result.variables["order_rate"][-1] == pytest.approx(160)
 
 
+def test_supply_delay_is_stateful_and_dynamic():
+    document = get_pattern("supply_delay").document
+    assert "delay" in document.capabilities
+    result = simulate_model(document, SimulationParameters())
+    assert_finite(result)
+    assert max(result.variables["inventory"]) > min(result.variables["inventory"])
+
+
 def test_club_campaign_produces_a_second_growth_wave():
     result = simulate_model(get_pattern("student_club").document, adaptive_parameters())
     assert_finite(result)
@@ -78,12 +109,43 @@ def test_nonlinear_oscillators_have_expected_ranges(pattern_id, variable, minimu
 
 
 def test_all_benchmark_descriptions_select_expected_archetype():
+    from pathlib import Path
+
     from pipeline.benchmark import load_prompts
 
     mismatches = []
-    for prompt in load_prompts():
-        selected = select_pattern(prompt["description"])
-        actual = selected.id if selected else None
-        if actual != prompt["expected_pattern"]:
-            mismatches.append((prompt["id"], prompt["expected_pattern"], actual))
+    root = Path(__file__).parents[1] / "pipeline"
+    for filename in (
+        "benchmark_prompts.json",
+        "benchmark_holdout_prompts.json",
+        "benchmark_confirmation_prompts.json",
+    ):
+        for prompt in load_prompts(root / filename):
+            selected = select_pattern(prompt["description"])
+            actual = selected.id if selected else None
+            if actual != prompt["expected_pattern"]:
+                mismatches.append((filename, prompt["id"], prompt["expected_pattern"], actual))
     assert not mismatches
+
+
+def test_pattern_prompt_matches_structure_input_contract():
+    import json
+
+    from pipeline.pattern_library import pattern_prompt
+
+    payload = json.loads(pattern_prompt(get_pattern("bass_diffusion")))
+    variables = {item["id"]: item for item in payload["variables"]}
+    assert variables["potential_adopters"]["initial"] == "total_market"
+    assert variables["adoption"]["source"]["id"] == "potential_adopters"
+    assert variables["adoption"]["target"]["id"] == "adopters"
+    assert variables["total_market"]["initial"] == 10000
+    assert variables["imitation"]["units"] == {"year": -1}
+    for item in variables.values():
+        assert "expression" not in item
+        if item["kind"] in {"stock", "constant"}:
+            assert not isinstance(item["initial"], dict)
+    equations = {item["id"]: item["expression"] for item in payload["equations"]}
+    assert "adoption" in equations
+    assert isinstance(equations["adoption"], str)
+    assert "potential_adopters" in equations["adoption"]
+    assert '"op"' not in equations["adoption"]

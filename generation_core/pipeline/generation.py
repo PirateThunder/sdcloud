@@ -100,7 +100,7 @@ _BASE_VARIABLE_ITEM_SCHEMA = {
 def _typed_variable_schema(kind: str) -> dict:
     properties = dict(_BASE_VARIABLE_ITEM_SCHEMA["properties"])
     properties["kind"] = {"type": "string", "enum": [kind]}
-    if kind == "stock":
+    if kind in {"stock", "constant"}:
         properties["initial"] = _EXPRESSION_INPUT_SCHEMA
     return {**_BASE_VARIABLE_ITEM_SCHEMA, "properties": properties}
 
@@ -246,6 +246,7 @@ async def _call_stage[T](
                 response_schema=response_schema,
             )
             previous_response = _json_excerpt(response)
+            _save_stage(workdir, f"{current_stage}_response", response)
             return parser(response)
         except (LLMResponseError, ModelValidationError, ValidationError) as exc:
             if isinstance(exc, LLMResponseError) and exc.response_text:
@@ -267,8 +268,8 @@ async def _call_stage[T](
             current_prompt = STAGE_REPAIR_PROMPT.format(
                 stage=stage,
                 error=str(exc)[:6000],
-                original_prompt=_json_excerpt(prompt, 30_000),
-                response=_json_excerpt(previous_response),
+                original_prompt=_json_excerpt(prompt, 20_000),
+                response=_json_excerpt(previous_response, 8_000),
             )
 
 
@@ -323,24 +324,219 @@ def _variables(response: Any) -> tuple[dict, list[dict]]:
     return response, raw
 
 
-def _normalize_assumptions(values: Any) -> Any:
+def _allows_monetary_budget(pattern, description: str) -> bool:
+    if pattern is None or pattern.id != "bass_diffusion":
+        return True
+    return any(
+        token in description.lower()
+        for token in ("dollar", "euro", "ruble", "currency", "budget", "бюджет", "рубл", "деньг")
+    )
+
+
+def _requires_normalized_pattern(pattern, description: str) -> bool:
+    if pattern is None or pattern.id not in {
+        "lorenz_system",
+        "van_der_pol_oscillator",
+        "duffing_oscillator",
+    }:
+        return False
+    return not any(
+        token in description.lower()
+        for token in (
+            "capacitance",
+            "inductance",
+            "farad",
+            "henry",
+            "ohm",
+            "newton",
+            "pascal",
+            "kilogram",
+            "si units",
+            "second",
+        )
+    )
+
+
+def _validate_brief_scope(brief: ModelBrief, pattern, description: str) -> None:
+    if _requires_normalized_pattern(pattern, description):
+        expected = {
+            "stocks": {item.id for item in pattern.document.variables if item.kind == "stock"},
+            "flows": {item.id for item in pattern.document.variables if item.kind == "flow"},
+            "exogenous_inputs": {
+                item.id for item in pattern.document.variables if item.kind == "constant"
+            },
+        }
+        actual = {
+            "stocks": set(brief.stocks),
+            "flows": set(brief.flows),
+            "exogenous_inputs": set(brief.exogenous_inputs),
+        }
+        if (
+            actual["stocks"] != expected["stocks"]
+            or actual["flows"] != expected["flows"]
+            or not actual["exogenous_inputs"] <= expected["exogenous_inputs"]
+        ):
+            raise ModelValidationError(
+                f"{pattern.id} needs normalized ModelBrief ids: expected={expected}, "
+                f"actual={actual}. Stocks/flows must match; exogenous inputs may be "
+                "a subset of pattern constants. Use the supplied validated pattern."
+            )
+        return
+    if _allows_monetary_budget(pattern, description):
+        return
+    monetary_inputs = [
+        item
+        for item in brief.exogenous_inputs
+        if any(
+            token in item.lower()
+            for token in ("dollar", "euro", "ruble", "currency", "budget", "бюджет", "рубл", "деньг")
+        )
+    ]
+    if monetary_inputs:
+        raise ModelValidationError(
+            "Bass ModelBrief must use fractional innovation/imitation rates, "
+            f"not unrequested monetary inputs: {monetary_inputs}"
+        )
+
+
+def _validate_normalized_scope(
+    raw: list[dict], pattern, description: str, time_unit: str | None
+) -> None:
+    if not _requires_normalized_pattern(pattern, description):
+        return
+    expected = {
+        (item.id, item.kind, tuple(sorted((item.units or {}).items())))
+        for item in pattern.document.variables
+    }
+    actual = {
+        (item.get("id"), item.get("kind"), tuple(sorted((item.get("units") or {}).items())))
+        for item in raw
+    }
+    expected_time = pattern.document.time.unit
+    if actual != expected or (time_unit is not None and time_unit != expected_time):
+        raise ModelValidationError(
+            f"{pattern.id} needs normalized pattern ids, kinds, units and time.unit="
+            f"{expected_time!r}; unrequested physical parameters are not allowed. "
+            f"Missing={sorted(expected - actual)}; unexpected={sorted(actual - expected)}; "
+            f"time.unit={time_unit!r}. Use the supplied validated pattern."
+        )
+
+
+def _validate_variable_scope(
+    raw: list[dict], pattern, description: str, time_unit: str | None = None
+) -> None:
+    _validate_normalized_scope(raw, pattern, description, time_unit)
+    if _allows_monetary_budget(pattern, description):
+        return
+    monetary_units = sorted(
+        {
+            unit
+            for item in raw
+            for unit in (item.get("units") or {})
+            if any(token in unit.lower() for token in ("dollar", "euro", "ruble", "currency"))
+        }
+    )
+    if monetary_units:
+        raise ModelValidationError(
+            "Bass diffusion needs fractional innovation/imitation rates with units 1/time, "
+            f"not an unrequested monetary advertising budget: {monetary_units}. "
+            "Use one adoption flow from potential_adopters to adopters and remove monetary variables."
+        )
+
+
+def _normalize_assumptions(
+    values: Any,
+    variables: list[dict],
+    time_settings: dict | None = None,
+) -> Any:
     if not isinstance(values, list):
         return values
+    by_id = {item.get("id"): item for item in variables}
     result = []
     for item in values:
         if not isinstance(item, dict):
             result.append(item)
             continue
         value = dict(item)
-        if isinstance(value.get("value"), bool | int | float):
-            value["value"] = str(value["value"])
+        raw_value = value.get("value")
+        empty = isinstance(raw_value, str) and not raw_value.strip()
+        if empty:
+            parts = str(value.get("path", "")).split(".")
+            if len(parts) == 1 and parts[0] in by_id:
+                parts = ["variables", parts[0]]
+            elif (
+                len(parts) == 2
+                and parts[0] in by_id
+                and parts[1] in {"initial", "expression"}
+            ):
+                parts = ["variables", *parts]
+            if parts[0] == "variables":
+                value["path"] = ".".join(parts)
+            candidate = None
+            if len(parts) in {2, 3} and parts[0] == "variables":
+                variable = by_id.get(parts[1], {})
+                field = parts[2] if len(parts) == 3 else "initial"
+                if field not in {"initial", "expression"}:
+                    field = "initial"
+                candidate = variable.get(field)
+                if candidate is None and len(parts) == 2:
+                    candidate = variable.get("expression")
+            elif (
+                len(parts) == 2
+                and parts[0] == "time"
+                and isinstance(time_settings, dict)
+            ):
+                candidate = time_settings.get(parts[1])
+            if candidate is not None:
+                raw_value = candidate
+                value["value"] = candidate
+        if isinstance(raw_value, bool | int | float):
+            value["value"] = str(raw_value)
+        elif empty and isinstance(raw_value, dict | list):
+            value["value"] = json.dumps(raw_value, ensure_ascii=False)
         result.append(value)
     return result
 
 
-def _variable_response(response: Any) -> tuple[dict, list[dict]]:
+def _normalize_time_settings(value: Any, default: TimeSettings | None) -> Any:
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    initial_time = result.get("initial_time")
+    if not isinstance(initial_time, int | float) or isinstance(initial_time, bool):
+        initial_time = default.initial_time if default else 0
+    final_time = result.get("final_time")
+    if not isinstance(final_time, int | float) or isinstance(final_time, bool):
+        final_time = default.final_time if default else initial_time + 100
+    if final_time <= initial_time:
+        final_time = default.final_time if default else initial_time + 100
+    time_step = result.get("time_step")
+    if not isinstance(time_step, int | float) or isinstance(time_step, bool) or time_step <= 0:
+        time_step = default.time_step if default else 0.25
+    saveper = result.get("saveper")
+    if not isinstance(saveper, int | float) or isinstance(saveper, bool) or saveper <= 0:
+        saveper = default.saveper if default else time_step
+    result.update(
+        unit=result.get("unit") or (default.unit if default else "year"),
+        initial_time=initial_time,
+        final_time=final_time,
+        time_step=time_step,
+        saveper=saveper,
+    )
+    return result
+
+
+def _variable_response(response: Any, *, default_time: TimeSettings | None = None) -> tuple[dict, list[dict]]:
     metadata, raw = _variables(response)
     metadata = dict(metadata)
+    raw = [item for item in raw if item.get("id") not in {"time", "pi", "e"}]
+    stock_ids = {
+        endpoint.get("id")
+        for item in raw
+        if isinstance(item, dict) and item.get("kind") == "flow"
+        for endpoint in (item.get("source"), item.get("target"))
+        if isinstance(endpoint, dict) and endpoint.get("kind") == "stock"
+    }
     normalized = []
     for item in raw:
         value = dict(item)
@@ -350,7 +546,10 @@ def _variable_response(response: Any) -> tuple[dict, list[dict]]:
                 for name, power in value["units"].items()
                 if name not in {"1", "dimensionless"}
             }
-        kind = value.get("kind")
+        kind = "stock" if value.get("id") in stock_ids else value.get("kind")
+        value["kind"] = kind
+        if kind == "stock" and value.get("initial") is None and value.get("expression") is not None:
+            value["initial"] = value["expression"]
         if kind == "stock":
             if value.get("initial") is None:
                 raise ModelValidationError(
@@ -389,6 +588,21 @@ def _variable_response(response: Any) -> tuple[dict, list[dict]]:
             raise ModelValidationError(f"invalid variable {value.get('id')}: {exc}") from exc
         normalized.append(value)
     ids = {item.get("id") for item in normalized}
+    stocks = {item.get("id") for item in normalized if item.get("kind") == "stock"}
+    unknown_endpoints = [
+        f"variables.{item.get('id')}.{field}={endpoint.get('id')}"
+        for item in normalized
+        if item.get("kind") == "flow"
+        for field in ("source", "target")
+        if isinstance(endpoint := item.get(field), dict)
+        and endpoint.get("kind") == "stock"
+        and endpoint.get("id") not in stocks
+    ]
+    if unknown_endpoints:
+        raise ModelValidationError(
+            f"unknown stock endpoints: {unknown_endpoints}; "
+            "declare the endpoint stock or use kind='cloud' for an external source/sink"
+        )
     for item in normalized:
         for field in ("initial", "derivative", "expression"):
             if item.get(field) is None:
@@ -403,7 +617,9 @@ def _variable_response(response: Any) -> tuple[dict, list[dict]]:
     metadata["variables"] = normalized
     try:
         if metadata.get("time") is not None:
-            metadata["time"] = TimeSettings.model_validate(metadata["time"]).model_dump(mode="json")
+            metadata["time"] = TimeSettings.model_validate(
+                _normalize_time_settings(metadata["time"], default_time)
+            ).model_dump(mode="json")
         if "tables" in metadata:
             metadata["tables"] = [
                 item.model_dump(mode="json")
@@ -413,7 +629,16 @@ def _variable_response(response: Any) -> tuple[dict, list[dict]]:
             metadata["assumptions"] = [
                 item.model_dump(mode="json")
                 for item in TypeAdapter(list[Assumption]).validate_python(
-                    _normalize_assumptions(metadata["assumptions"])
+                    _normalize_assumptions(
+                        metadata["assumptions"],
+                        raw,
+                        metadata.get("time")
+                        or (
+                            default_time.model_dump(mode="json")
+                            if default_time is not None
+                            else None
+                        ),
+                    )
                 )
             ]
     except ValidationError as exc:
@@ -432,16 +657,23 @@ def _expressions(response: Any) -> dict[str, Any]:
             for item in raw
             if isinstance(item, dict) and item.get("kind") != "stock"
         }
+    if isinstance(raw, dict):
+        raw = {key: value for key, value in raw.items() if key not in {"time", "pi", "e"}}
     if not isinstance(raw, dict) or not raw:
         raise ModelValidationError("equation generation returned no expressions")
     return raw
 
 
 def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
+    expressions = {key: value for key, value in expressions.items() if key not in {"time", "pi", "e"}}
     ids = {item.get("id") for item in raw}
-    unknown = set(expressions) - ids
+    stock_ids = {item.get("id") for item in raw if item.get("kind") == "stock"}
+    unknown = set(expressions) - ids - stock_ids
     if unknown:
-        raise ModelValidationError(f"expressions reference unknown variables: {sorted(unknown)}")
+        raise ModelValidationError(
+            f"expressions reference undeclared variable ids: {sorted(unknown)}"
+        )
+    expressions = {key: value for key, value in expressions.items() if key in ids}
     merged = []
     for item in raw:
         value = dict(item)
@@ -450,7 +682,14 @@ def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
             if value.get("derivative") is not None:
                 value["derivative"] = normalize_expression(value["derivative"])
         else:
-            expression = expressions.get(value.get("id"), value.pop("initial", None))
+            fallback = value.pop("initial", None)
+            expression = value.get("expression")
+            if expression is None or value.get("kind") != "constant":
+                supplied = expressions.get(value.get("id"))
+                if supplied is not None:
+                    expression = supplied
+            if expression is None:
+                expression = fallback
             if expression is None:
                 raise ModelValidationError(f"missing expression for {value.get('id')}")
             value["expression"] = normalize_expression(expression)
@@ -477,8 +716,12 @@ def _normalize_generated_variables(variables: list[SDVariable]) -> list[SDVariab
         "ramp",
         "delay1",
         "delay3",
+        "delay1i",
+        "delay3i",
         "smooth",
         "smooth3",
+        "smoothi",
+        "smooth3i",
         "initial",
     }
     normalized = []
@@ -508,12 +751,47 @@ def _validated(document: ModelDocument) -> tuple[ModelDocument, list]:
     return document, errors
 
 
-def _repair(document: ModelDocument, response: Any, attempt: int) -> ModelDocument:
+def _repair(
+    document: ModelDocument,
+    response: Any,
+    attempt: int,
+    *,
+    preserve_topology: bool = True,
+    preserve_kinds: bool = True,
+) -> ModelDocument:
     if not isinstance(response, dict) or not isinstance(response.get("variables"), list):
         raise ModelValidationError("repair must return a complete variables list")
+    previous = {item.id: item for item in document.variables}
+    candidate_response = dict(response)
+    candidates = []
+    for item in response["variables"]:
+        if not isinstance(item, dict):
+            candidates.append(item)
+            continue
+        value = dict(item)
+        existing = previous.get(value.get("id"))
+        if existing is not None:
+            if preserve_kinds:
+                value["kind"] = existing.kind
+            if existing.kind == "stock" and value.get("initial") is None:
+                value["initial"] = existing.initial.model_dump(mode="json")
+            if preserve_topology and existing.kind == "flow":
+                value["source"] = (
+                    existing.source.model_dump(mode="json") if existing.source else None
+                )
+                value["target"] = (
+                    existing.target.model_dump(mode="json") if existing.target else None
+                )
+        candidates.append(value)
+    present = {item.get("id") for item in candidates if isinstance(item, dict)}
+    candidates.extend(
+        item.model_dump(mode="json")
+        for item in document.variables
+        if item.id not in present
+    )
+    candidate_response["variables"] = candidates
     try:
-        metadata, raw = _variable_response(response)
-        previous = {item.id: item for item in document.variables}
+        metadata, raw = _variable_response(candidate_response, default_time=document.time)
         for item in raw:
             if item.get("kind") == "stock" or item.get("expression") is not None:
                 continue
@@ -525,7 +803,7 @@ def _repair(document: ModelDocument, response: Any, attempt: int) -> ModelDocume
             id=document.id,
             name=response.get("name") or document.name,
             description=document.description,
-            time=response.get("time") or document.time,
+            time=metadata.get("time") or document.time,
             variables=variables,
             tables=metadata.get("tables", []),
             assumptions=metadata.get("assumptions", []),
@@ -549,6 +827,45 @@ def _repair_payload(document: ModelDocument) -> dict:
     }
 
 
+def _repair_context(document: ModelDocument) -> dict:
+    fields = {
+        "id",
+        "kind",
+        "units",
+        "initial",
+        "expression",
+        "derivative",
+        "source",
+        "target",
+        "bounds",
+        "subscripts",
+        "exogenous",
+        "allow_isolated",
+        "topology_status",
+    }
+    variables = []
+    for item in document.variables:
+        payload = item.model_dump(mode="json")
+        variables.append(
+            {
+                key: value
+                for key, value in payload.items()
+                if key in fields and value is not None and value != [] and value is not False
+            }
+        )
+    return {
+        "name": document.name,
+        "time": document.time.model_dump(mode="json"),
+        "variables": variables,
+        "tables": [item.model_dump(mode="json") for item in document.tables],
+        "assumptions": [item.model_dump(mode="json") for item in document.assumptions],
+    }
+
+
+def _pattern_repair_context(pattern) -> str:
+    return pattern_prompt(pattern)
+
+
 def _smoke(document: ModelDocument) -> dict[str, Any]:
     try:
         smoke = simulate_model(
@@ -565,6 +882,16 @@ def _smoke(document: ModelDocument) -> dict[str, Any]:
             math.isfinite(value) for series in smoke.variables.values() for value in series
         ):
             raise ModelValidationError("smoke simulation returned non-finite values")
+        if document.pattern_id == "supply_delay":
+            stock_ids = {item.id for item in document.variables if item.kind == "stock"}
+            if not any(
+                len(series) > 1 and max(series) - min(series) > 1e-9
+                for name, series in smoke.variables.items()
+                if name in stock_ids
+            ):
+                raise ModelValidationError(
+                    "supply-delay model is static; add demand/order variation or an inventory adjustment policy"
+                )
     except Exception as exc:
         raise ModelValidationError(
             f"generated model smoke simulation failed: {type(exc).__name__}: {exc}"
@@ -584,6 +911,12 @@ async def generate_model(
     description = _description(request)
     pattern = select_pattern(description)
     pattern_text = pattern_prompt(pattern)
+
+    def parse_brief(response: Any) -> ModelBrief:
+        brief = ModelBrief.model_validate(response)
+        _validate_brief_scope(brief, pattern, description)
+        return brief
+
     _save_stage(workdir, "brief")
     brief = await _call_stage(
         llm,
@@ -592,7 +925,7 @@ async def generate_model(
         system="You are a system dynamics expert. Return only JSON.",
         temperature=0.1,
         response_schema=ModelBrief.model_json_schema(),
-        parser=ModelBrief.model_validate,
+        parser=parse_brief,
         budget=budget,
         workdir=workdir,
     )
@@ -600,6 +933,21 @@ async def generate_model(
     _save_stage(workdir, "brief", brief.model_dump(mode="json"))
 
     _save_stage(workdir, "variables")
+
+    def parse_variables(response: Any) -> tuple[dict, list[dict]]:
+        result = _variable_response(
+            response,
+            default_time=pattern.document.time
+            if pattern
+            else request.base_model.time
+            if request.base_model
+            else None,
+        )
+        _validate_variable_scope(
+            result[1], pattern, description, (result[0].get("time") or {}).get("unit")
+        )
+        return result
+
     metadata, raw = await _call_stage(
         llm,
         stage="variables",
@@ -611,7 +959,7 @@ async def generate_model(
         system="You design valid system dynamics structures. Return only JSON.",
         temperature=0.2,
         response_schema=_VARIABLES_RESPONSE_SCHEMA,
-        parser=_variable_response,
+        parser=parse_variables,
         budget=budget,
         workdir=workdir,
     )
@@ -623,21 +971,43 @@ async def generate_model(
         expressions = _expressions(response)
         return expressions, _merge(raw, expressions)
 
-    expressions, variables = await _call_stage(
-        llm,
-        stage="equations",
-        prompt=EQUATION_GENERATION_PROMPT.format(
-            description=description,
-            brief=brief_text,
-            variables=json.dumps(raw, ensure_ascii=False, indent=2),
-        ),
-        system="You generate typed system dynamics expressions. Return only JSON.",
-        temperature=0.2,
-        response_schema=_EQUATIONS_RESPONSE_SCHEMA,
-        parser=parse_equations,
-        budget=budget,
-        workdir=workdir,
-    )
+    if request.base_model is None and _requires_normalized_pattern(pattern, description):
+        expressions = {
+            item.id: item.expression.model_dump(mode="json")
+            for item in pattern.document.variables
+            if item.kind != "stock"
+        }
+        variables = _merge(raw, expressions)
+        metadata["assumptions"] = [
+            *metadata.get("assumptions", []),
+            Assumption(
+                path="equations",
+                value=pattern.id,
+                source="archetype",
+                rationale=(
+                    "Normalized equations are taken from the validated pattern; "
+                    "stock initial values and constants are preserved."
+                ),
+                requires_confirmation=False,
+            ).model_dump(mode="json"),
+        ]
+    else:
+        expressions, variables = await _call_stage(
+            llm,
+            stage="equations",
+            prompt=EQUATION_GENERATION_PROMPT.format(
+                description=description,
+                brief=brief_text,
+                pattern=pattern_text,
+                variables=json.dumps(raw, ensure_ascii=False, indent=2),
+            ),
+            system="You generate typed system dynamics expressions. Return only JSON.",
+            temperature=0.2,
+            response_schema=_EQUATIONS_RESPONSE_SCHEMA,
+            parser=parse_equations,
+            budget=budget,
+            workdir=workdir,
+        )
     _save_stage(workdir, "equations", expressions)
 
     if request.assumption_policy == "require_explicit" and any(
@@ -714,13 +1084,13 @@ async def generate_model(
             response = await llm.chat_json(
                 REPAIR_PROMPT.format(
                     brief=brief_text,
-                    pattern=pattern_text,
+                    pattern=_pattern_repair_context(pattern),
                     errors=json.dumps(
                         [item.model_dump(mode="json") for item in prompt_errors],
                         ensure_ascii=False,
                         indent=2,
                     ),
-                    document=json.dumps(_repair_payload(document), ensure_ascii=False, indent=2),
+                    document=json.dumps(_repair_context(document), ensure_ascii=False, indent=2),
                 ),
                 stage=f"repair_{attempt}",
                 system="You repair system dynamics models using validator errors. Return only JSON.",
@@ -728,7 +1098,21 @@ async def generate_model(
                 response_schema=_VARIABLES_RESPONSE_SCHEMA,
             )
             _save_stage(workdir, f"repair_{attempt}_response", response)
-            candidate = _repair(document, response, attempt)
+            candidate = _repair(
+                document,
+                response,
+                attempt,
+                preserve_topology=not any(
+                    token in issue.code
+                    for issue in prompt_errors
+                    for token in ("TOPOLOGY", "FLOW", "DERIVATIVE", "SEMANTIC")
+                ),
+                preserve_kinds=not any(
+                    token in issue.code
+                    for issue in prompt_errors
+                    for token in ("TOPOLOGY", "FLOW", "DERIVATIVE", "SEMANTIC")
+                ),
+            )
             document, errors = _validated(candidate)
         except (LLMResponseError, ModelValidationError, ValidationError) as exc:
             last_repair_error = exc

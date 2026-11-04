@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.2.1**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.2.2**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -16,6 +16,10 @@ backend и не зависит от frontend.
 - Многостадийная LLM-генерация: `ModelBrief → variables → equations → validation`,
   strict JSON Schema на каждой стадии, ранние repair и общий bounded budget.
 - 16 validated pattern templates и smoke-симуляция готовой модели.
+- Для новых нормированных Lorenz/Van der Pol/Duffing без явных физических параметров
+  equations берутся из validated pattern без повторного LLM-вывода; initial/constants
+  сохраняются, archetype-provenance явно записывается. Остальные модели и редактирование
+  используют обычный LLM equations stage.
 - Контекстные ответы, уточнения и редактирование существующей модели.
 - Симуляции через PySD/SciPy: Euler, RK4, RK45, DOP853, LSODA и BDF.
 - Сценарии, seeded sensitivity analysis и calibration по наблюдениям.
@@ -77,7 +81,7 @@ uv run python simulate.py \
 ```bash
 export LLM_PROVIDER=openrouter
 export OPENROUTER_API_KEY='ваш-ключ'
-export OPENROUTER_MODEL='openai/gpt-4o-mini'
+export OPENROUTER_MODEL='qwen/qwen3-30b-a3b-instruct-2507'
 ```
 
 `OPENROUTER_BASE_URL`, `PROXY_URL` и `LLM_MAX_REPAIRS` можно переопределить при
@@ -93,7 +97,22 @@ uv run python scenarios.py --model model.json --scenarios scenarios.json
 uv run python sensitivity.py --model model.json --config sensitivity.json
 uv run python calibrate.py --model model.json --observations observations.json
 uv run python benchmark.py --runs 3 --output out/benchmark.json
+uv run python benchmark.py --runs 3 \
+  --prompts-file pipeline/benchmark_holdout_prompts.json \
+  --output out/benchmark-holdout.json \
+  --artifacts-dir out/benchmark-holdout-artifacts
 ```
+
+`benchmark_holdout_prompts.json` содержит 16 описаний, по одному на archetype, и
+используется как validation-corpus для текущих итераций. После их завершения отдельный
+confirmation-набор находится в `benchmark_confirmation_prompts.json`; его live metrics
+ещё не измерены. Offline-тест проверяет выбор archetype на всех corpus.
+`--artifacts-dir` дополнительно сохраняет prompt, model, simulation, успешные ответы LLM
+и стадии каждого случая. При повторе прежние JSON-стадии того же случая очищаются.
+Отчёт содержит SHA-256 corpus и pipeline, max repairs, concurrency и настройки LLM.
+По умолчанию `--concurrency 1`, что подходит для локальной GPU. Для облачного benchmark
+можно явно задать небольшой лимит, например `--concurrency 2`; порядок результатов
+и изоляция workdir сохраняются.
 
 Форматы входных JSON соответствуют Pydantic-схемам в `pipeline/schemas.py` и
 `pipeline/analysis_schemas.py`. Все параметры любого CLI можно посмотреть через
@@ -139,9 +158,12 @@ vLLM с `QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, `--max-model-len 16384` и
 подтверждены `/v1/models`, CLI generate/simulate, REST generation/simulation и полный
 продуктовый сценарий с контекстным чатом, версиями и экспортом.
 
-Полный local benchmark 26×3 (78 cases): executable 83,3%, semantic 83,3%, behavior
-75,6%, average duration 31,256 с. Все 26 описаний имеют хотя бы один semantic success;
-14 имеют behavior success во всех трёх запусках. Целевые 90/85/85% пока не достигнуты.
+Текущий local benchmark на RTX 5090 (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`,
+concurrency=1): исходный 26×3 — 98,7% по всем метрикам, average duration 16,49 с;
+held-out 16×3 — 97,9% executable/semantic и 95,8% behavior, average duration 17,831 с.
+Pipeline hash обоих — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
+Исходный OpenRouter 26×3 (`qwen/qwen3-30b-a3b-instruct-2507`): 94,87% по всем метрикам;
+confirmation v16 — 95,83%/93,75%, validation v13 — 100%. Local quality gate пройден.
 
 ## REST API
 

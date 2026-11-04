@@ -56,6 +56,18 @@ async def test_malformed_json_is_repaired_on_the_same_stage():
     assert llm.calls == ["brief", "brief_repair_1", "variables", "equations"]
 
 
+async def test_stage_artifacts_include_successful_response_before_parsing(tmp_path):
+    llm = EarlyRepairLLM(
+        failures={
+            "brief": LLMResponseError("failed to parse LLM JSON", response_text="{broken")
+        }
+    )
+    await generate_model(request(), llm, workdir=tmp_path, max_repairs=1)
+    assert not (tmp_path / "brief_response.json").exists()
+    repaired = json.loads((tmp_path / "brief_repair_1_response.json").read_text())
+    assert repaired["stocks"]
+
+
 async def test_unknown_expression_id_is_repaired_before_full_model_repair():
     llm = EarlyRepairLLM(
         failures={"equations": {"expressions": {"not_a_variable": {"op": "lit", "value": 1}}}}
@@ -79,7 +91,7 @@ async def test_early_repair_respects_zero_budget():
     llm = EarlyRepairLLM(
         failures={"equations": {"expressions": {"not_a_variable": {"op": "lit", "value": 1}}}}
     )
-    with pytest.raises(ModelValidationError, match="unknown variables"):
+    with pytest.raises(ModelValidationError, match="undeclared variable ids"):
         await generate_model(request(), llm, max_repairs=0)
     assert llm.calls == ["brief", "variables", "equations"]
 
@@ -148,8 +160,18 @@ async def test_dsl_numeric_values_and_assumptions_are_normalized_without_repair(
         item for item in variants if item["properties"]["kind"]["enum"] == ["constant"]
     )
     assert {"type": "null"} not in stock_schema["properties"]["initial"]["anyOf"]
-    assert {"type": "null"} in constant_schema["properties"]["initial"]["anyOf"]
+    assert {"type": "null"} not in constant_schema["properties"]["initial"]["anyOf"]
     assert llm.schemas["equations"]["required"] == ["expressions"]
+
+
+def test_extracted_constant_value_wins_over_equation_self_reference():
+    from pipeline.generation import _merge
+
+    _, raw = _variable_response(
+        {"variables": [{"id": "rate", "kind": "constant", "initial": 0.1}]}
+    )
+    variables = _merge(raw, {"rate": "rate"})
+    assert variables[0].expression.value == 0.1
 
 
 def test_nonstock_initial_becomes_expression_before_kind_filtering():
@@ -168,6 +190,197 @@ def test_nonstock_initial_becomes_expression_before_kind_filtering():
     )
     assert variables[0]["expression"] == {"op": "lit", "value": 0.1}
     assert "initial" not in variables[0]
+
+
+def test_empty_assumption_value_uses_explicit_variable_initial():
+    metadata, _ = _variable_response(
+        {
+            "time": {
+                "unit": "week",
+                "initial_time": 0,
+                "final_time": 10,
+                "time_step": 0.25,
+                "saveper": 0.5,
+            },
+            "variables": [{"id": "rate", "kind": "constant", "initial": 0.05}],
+            "assumptions": [
+                {
+                    "path": "variables.rate.initial",
+                    "value": "",
+                    "source": "llm_inferred",
+                    "rationale": "Illustrative rate",
+                    "requires_confirmation": True,
+                },
+                {
+                    "path": "time.time_step",
+                    "value": "",
+                    "source": "llm_inferred",
+                    "rationale": "Illustrative time step",
+                    "requires_confirmation": False,
+                },
+            ],
+        }
+    )
+    assert metadata["assumptions"][0]["value"] == "0.05"
+    assert metadata["assumptions"][1]["value"] == "0.25"
+
+
+def test_empty_assumption_value_accepts_unambiguous_variable_shorthand():
+    metadata, _ = _variable_response(
+        {
+            "variables": [{"id": "rate", "kind": "constant", "initial": 0.05}],
+            "assumptions": [
+                {
+                    "path": "rate",
+                    "value": "",
+                    "source": "llm_inferred",
+                    "rationale": "Illustrative rate",
+                    "requires_confirmation": True,
+                },
+                {
+                    "path": "rate.initial",
+                    "value": "",
+                    "source": "llm_inferred",
+                    "rationale": "Illustrative rate",
+                    "requires_confirmation": True,
+                },
+            ],
+        }
+    )
+    assert [item["value"] for item in metadata["assumptions"]] == ["0.05", "0.05"]
+    assert [item["path"] for item in metadata["assumptions"]] == [
+        "variables.rate",
+        "variables.rate.initial",
+    ]
+
+
+def test_bass_rejects_unrequested_monetary_budget_but_allows_explicit_budget():
+    from pipeline.generation import _validate_variable_scope
+    from pipeline.pattern_library import get_pattern
+
+    pattern = get_pattern("bass_diffusion")
+    variables = [
+        {
+            "id": "advertising_budget",
+            "kind": "constant",
+            "units": {"dollar": 1},
+            "initial": 100,
+        }
+    ]
+    with pytest.raises(ModelValidationError, match="unrequested monetary advertising budget"):
+        _validate_variable_scope(variables, pattern, "App adoption through paid advertising")
+    _validate_variable_scope(variables, pattern, "Adoption with a budget of 100 dollars")
+
+
+def test_normalized_oscillators_reject_unrequested_physical_units():
+    from pipeline.generation import _validate_variable_scope
+    from pipeline.pattern_library import get_pattern
+
+    pattern = get_pattern("van_der_pol_oscillator")
+    valid = [item.model_dump(mode="json") for item in pattern.document.variables]
+    description = "Electronic Van der Pol oscillator with a relaxation limit cycle"
+    _validate_variable_scope(valid, pattern, description, pattern.document.time.unit)
+    invalid = [
+        {"id": "capacitor_charge", "kind": "stock", "units": {"coulomb": 1}, "initial": 0}
+    ]
+    with pytest.raises(ModelValidationError, match="normalized pattern ids"):
+        _validate_variable_scope(invalid, pattern, description, pattern.document.time.unit)
+    with pytest.raises(ModelValidationError, match="time.unit='second'"):
+        _validate_variable_scope(valid, pattern, description, "second")
+    _validate_variable_scope(
+        invalid,
+        pattern,
+        "Van der Pol circuit with capacitance 1 farad",
+        "second",
+    )
+
+
+async def test_normalized_pattern_uses_validated_equations_without_llm_stage():
+    from pipeline.generation import _validate_brief_scope
+    from pipeline.pattern_library import get_pattern
+    from pipeline.schemas import ModelBrief
+
+    pattern = get_pattern("van_der_pol_oscillator")
+    description = "Electronic Van der Pol oscillator with a relaxation limit cycle"
+    brief = ModelBrief(
+        goal="Model a relaxation oscillator",
+        boundaries=["Normalized circuit dynamics"],
+        time_horizon="60 time units",
+        time_unit="time",
+        aggregation="medium",
+        stocks=["position", "velocity"],
+        flows=["d_position", "d_velocity"],
+        exogenous_inputs=["mu", "acceleration_scale"],
+        expected_feedback_loops=["nonlinear damping"],
+    )
+    with pytest.raises(ModelValidationError, match="normalized ModelBrief"):
+        _validate_brief_scope(
+            brief.model_copy(update={"stocks": ["capacitor_charge"]}),
+            pattern,
+            description,
+        )
+    with pytest.raises(ModelValidationError, match="normalized ModelBrief"):
+        _validate_brief_scope(
+            brief.model_copy(update={"exogenous_inputs": ["capacitance"]}),
+            pattern,
+            description,
+        )
+    _validate_brief_scope(
+        brief.model_copy(update={"exogenous_inputs": ["mu"]}), pattern, description
+    )
+    variables = []
+    for item in pattern.document.variables:
+        payload = item.model_dump(mode="json")
+        if item.kind == "constant":
+            payload["initial"] = payload["expression"]
+        if item.kind != "stock":
+            payload["expression"] = None
+        variables.append(payload)
+    llm = EarlyRepairLLM(
+        replacements={
+            "brief": brief.model_dump(mode="json"),
+            "variables": {
+                "name": "Normalized Van der Pol",
+                "time": pattern.document.time.model_dump(mode="json"),
+                "variables": variables,
+                "tables": [],
+                "assumptions": [],
+            },
+        }
+    )
+    document = await generate_model(
+        GenerationRequest(description=description), llm, max_repairs=0
+    )
+    assert llm.calls == ["brief", "variables"]
+    assert document.repair_attempts == 0
+    assert document.pattern_id == pattern.id
+    assert [item.expression for item in document.variables if item.kind != "stock"] == [
+        item.expression for item in pattern.document.variables if item.kind != "stock"
+    ]
+    assert document.assumptions[-1].source == "archetype"
+    assert document.assumptions[-1].path == "equations"
+
+
+def test_bass_brief_rejects_unrequested_monetary_inputs():
+    from pipeline.generation import _validate_brief_scope
+    from pipeline.pattern_library import get_pattern
+    from pipeline.schemas import ModelBrief
+
+    brief = ModelBrief(
+        goal="Model app adoption",
+        boundaries=["App market"],
+        time_horizon="100 years",
+        time_unit="year",
+        aggregation="medium",
+        stocks=["potential_adopters", "adopters"],
+        flows=["adoption"],
+        exogenous_inputs=["advertising_budget"],
+        expected_feedback_loops=["word of mouth"],
+    )
+    pattern = get_pattern("bass_diffusion")
+    with pytest.raises(ModelValidationError, match="Bass ModelBrief.*advertising_budget"):
+        _validate_brief_scope(brief, pattern, "App adoption through advertising")
+    _validate_brief_scope(brief, pattern, "Adoption with a budget in dollars")
 
 
 def valid_repair_payload():
@@ -217,6 +430,70 @@ def test_final_repair_preserves_previous_expressions_for_null_values():
     assert [item.expression for item in repaired.variables if item.kind != "stock"] == [
         item.expression for item in original.variables if item.kind != "stock"
     ]
+
+
+def test_repair_preserves_structure_when_all_kinds_are_corrupted():
+    from pipeline.generation import _repair
+    from pipeline.pattern_library import get_pattern
+
+    original = _repair(get_pattern("predator_prey").document, valid_repair_payload(), 0)
+    payload = valid_repair_payload()
+    for item in payload["variables"]:
+        item["kind"] = "flow"
+        item["initial"] = None
+        item["expression"] = None
+    repaired = _repair(original, payload, 1, preserve_topology=True)
+    assert repaired.model_hash() == original.model_hash()
+
+
+def test_topology_repair_can_restore_constant_misclassified_as_stock():
+    from pipeline.generation import _repair, _validated
+    from pipeline.pattern_library import get_pattern
+    from pipeline.schemas import FlowEndpoint, StockVariable
+
+    document = get_pattern("exponential_growth").document
+    variables = []
+    for item in document.variables:
+        if item.id == "birth_rate":
+            item = StockVariable(
+                id=item.id,
+                kind="stock",
+                initial=item.expression,
+                units=item.units,
+            )
+        elif item.id == "births":
+            item = item.model_copy(
+                update={"source": FlowEndpoint(kind="stock", id="birth_rate")}
+            )
+        variables.append(item)
+    original = document.model_copy(update={"variables": variables})
+    payload = valid_repair_payload()
+    payload["variables"] = [
+        item.model_dump(mode="json") for item in document.variables
+    ]
+    repaired = _repair(
+        original,
+        payload,
+        1,
+        preserve_topology=False,
+        preserve_kinds=False,
+    )
+    rate = next(item for item in repaired.variables if item.id == "birth_rate")
+    assert rate.kind == "constant"
+    assert not _validated(repaired)[1]
+
+
+def test_repair_does_not_drop_missing_existing_variables():
+    from pipeline.generation import _repair
+    from pipeline.pattern_library import get_pattern
+
+    original = get_pattern("predator_prey").document
+    payload = valid_repair_payload()
+    payload["variables"] = payload["variables"][1:]
+    repaired = _repair(original, payload, 1)
+    prey = next(item for item in repaired.variables if item.id == "prey")
+    assert prey.kind == "stock"
+    assert prey.initial.value == 100
 
 
 async def test_smoke_failure_uses_repair_budget(monkeypatch):
@@ -292,3 +569,151 @@ def test_explicit_dimensionless_units_are_normalized():
         }
     )
     assert variables[0]["units"] == {}
+
+
+def test_reserved_time_is_ignored_and_null_equation_uses_existing_expression():
+    from pipeline.generation import _merge
+
+    variables = _merge(
+        [
+            {
+                "id": "rate",
+                "kind": "constant",
+                "units": {"year": -1},
+                "expression": {"op": "lit", "value": 0.1},
+            }
+        ],
+        {"time": "time", "rate": None},
+    )
+    assert variables[0].expression.value == 0.1
+
+
+def test_repair_context_is_smaller_than_full_document_payload():
+    from pipeline.generation import _repair_context, _repair_payload
+    from pipeline.pattern_library import get_pattern
+
+    document = get_pattern("student_club").document
+    full = json.dumps(_repair_payload(document))
+    compact = _repair_context(document)
+    assert len(json.dumps(compact)) < len(full)
+    assert "label" not in compact["variables"][0]
+    assert "description" not in compact["variables"][0]
+    assert "units" in compact["variables"][0]
+
+
+def test_reserved_builtin_variables_are_not_declared():
+    _, variables = _variable_response(
+        {
+            "variables": [
+                {"id": "time", "kind": "stock", "initial": 0},
+                {"id": "rate", "kind": "constant", "initial": 0.1},
+            ]
+        }
+    )
+    assert [item["id"] for item in variables] == ["rate"]
+
+
+def test_equations_reject_unknown_ids_but_ignore_stock_expressions():
+    from pipeline.generation import _merge
+
+    with pytest.raises(ModelValidationError, match="undeclared variable ids"):
+        _merge(
+            [{"id": "rate", "kind": "constant", "units": {"year": -1}}],
+            {"rate": 0.1, "replenishment_rate": 0.2},
+        )
+    variables = _merge(
+        [{"id": "members", "kind": "stock", "initial": 10}],
+        {"members": "members * 2"},
+    )
+    assert variables[0].initial.value == 10
+
+
+def test_static_supply_delay_is_rejected_by_smoke():
+    from pipeline.expression_parser import parse_expression
+    from pipeline.generation import _smoke
+    from pipeline.pattern_library import get_pattern
+
+    document = get_pattern("supply_delay").document
+    variables = []
+    for item in document.variables:
+        if item.id == "order_rate":
+            item = item.model_copy(update={"expression": parse_expression("100")})
+        variables.append(item)
+    document = document.model_copy(update={"variables": variables, "pattern_id": "supply_delay"})
+    with pytest.raises(ModelValidationError, match="supply-delay model is static"):
+        _smoke(document)
+
+
+def test_invalid_time_settings_use_archetype_defaults():
+    from pipeline.schemas import TimeSettings
+
+    metadata, _ = _variable_response(
+        {
+            "time": {
+                "unit": "week",
+                "initial_time": 0,
+                "final_time": 100,
+                "time_step": 0,
+                "saveper": 0,
+            },
+            "variables": [{"id": "rate", "kind": "constant", "initial": 0.1}],
+        },
+        default_time=TimeSettings(
+            unit="week",
+            final_time=104,
+            time_step=0.01,
+            saveper=0.05,
+        ),
+    )
+    assert metadata["time"]["time_step"] == 0.01
+    assert metadata["time"]["saveper"] == 0.05
+    assert metadata["time"]["final_time"] == 100
+
+
+def test_stock_kind_is_inferred_from_flow_endpoints():
+    _, variables = _variable_response(
+        {
+            "variables": [
+                {"id": "savings", "kind": "constant", "initial": 1000},
+                {
+                    "id": "interest_income",
+                    "kind": "flow",
+                    "source": {"kind": "cloud", "id": "interest_source"},
+                    "target": {"kind": "stock", "id": "savings"},
+                },
+            ]
+        }
+    )
+    savings = next(item for item in variables if item["id"] == "savings")
+    assert savings["kind"] == "stock"
+    assert savings["initial"]["value"] == 1000
+
+
+def test_unknown_stock_endpoint_is_repaired_on_variables_stage():
+    with pytest.raises(ModelValidationError, match="interest_income_source.*kind='cloud'"):
+        _variable_response(
+            {
+                "variables": [
+                    {"id": "savings", "kind": "stock", "initial": 1000},
+                    {
+                        "id": "interest_income",
+                        "kind": "flow",
+                        "source": {"kind": "stock", "id": "interest_income_source"},
+                        "target": {"kind": "stock", "id": "savings"},
+                    },
+                ]
+            }
+        )
+
+
+def test_final_repair_uses_normalized_time_settings():
+    from pipeline.generation import _repair
+    from pipeline.pattern_library import get_pattern
+
+    document = get_pattern("predator_prey").document
+    payload = valid_repair_payload()
+    payload["time"]["time_step"] = 0
+    payload["time"]["saveper"] = 0
+    repaired = _repair(document, payload, 1)
+    assert repaired.time.time_step == document.time.time_step
+    assert repaired.time.saveper == document.time.saveper

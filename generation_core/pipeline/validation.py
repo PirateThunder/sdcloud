@@ -96,8 +96,12 @@ class ModelValidator:
                             "ramp",
                             "delay1",
                             "delay3",
+                            "delay1i",
+                            "delay3i",
                             "smooth",
                             "smooth3",
+                            "smoothi",
+                            "smooth3i",
                             "initial",
                         }
                         for node in walk(variable.expression)
@@ -434,7 +438,10 @@ class ModelValidator:
             if expression.op in {"add", "sub", "mod"}:
                 if left != right:
                     self.issue(
-                        "INCOMPATIBLE_UNITS", path, "arithmetic operands have different units"
+                        "INCOMPATIBLE_UNITS",
+                        path,
+                        f"{expression.op} operands have different units: "
+                        f"left={left}, right={right}",
                     )
                     return _UNKNOWN
                 return left
@@ -468,7 +475,11 @@ class ModelValidator:
         if name in {"min", "max", "minimum", "maximum", "abs"}:
             known = [item for item in args if item is not _UNKNOWN]
             if known and any(item != known[0] for item in known[1:]):
-                self.issue("INCOMPATIBLE_UNITS", path, "function arguments have different units")
+                self.issue(
+                    "INCOMPATIBLE_UNITS",
+                    path,
+                    f"{name} arguments have different units: {args}",
+                )
                 return _UNKNOWN
             return known[0] if known else _UNKNOWN
         if name in {"exp", "log", "log10", "sin", "cos", "tan"}:
@@ -503,7 +514,17 @@ class ModelValidator:
             return _UNKNOWN
         if name == "if_then_else" and len(args) == 3:
             return args[1] if args[1] == args[2] else _UNKNOWN
-        if name in {"delay1", "delay3", "smooth", "smooth3", "initial"}:
+        if name in {
+            "delay1",
+            "delay3",
+            "delay1i",
+            "delay3i",
+            "smooth",
+            "smooth3",
+            "smoothi",
+            "smooth3i",
+            "initial",
+        }:
             return args[0] if args else _UNKNOWN
         return _UNKNOWN
 

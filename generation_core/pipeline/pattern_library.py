@@ -4,8 +4,9 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .codegen import expression_to_vensim
 from .expression_parser import parse_expression
-from .ir import binary, call, lit, ref
+from .ir import binary, call, constant_number, lit, ref
 from .schemas import (
     AuxiliaryVariable,
     ConstantVariable,
@@ -330,7 +331,7 @@ def supply_delay() -> ModelDocument:
     return _model(
         "Supply chain delay",
         [
-            _stock("inventory", {"item": 1}, 100),
+            _stock("inventory", {"item": 1}, 50),
             _flow(
                 "shipments",
                 {"item": 1, "week": -1},
@@ -345,7 +346,11 @@ def supply_delay() -> ModelDocument:
                 "inventory",
                 "cloud:sales_sink",
             ),
-            _constant("order_rate", {"item": 1, "week": -1}, 100),
+            _auxiliary(
+                "order_rate",
+                {"item": 1, "week": -1},
+                binary("add", lit(100), call("step", lit(50), lit(5))),
+            ),
             _constant("demand_rate", {"item": 1, "week": -1}, 100),
             _constant("delay_time", {"week": 1}, 4),
         ],
@@ -691,11 +696,23 @@ _BUILDERS = {
 _METADATA = {
     "exponential_growth": (
         "Exponential growth and decline",
-        ("growth", "population", "decay", "interest", "deposit", "рост", "экспонент"),
+        (
+            "growth",
+            "grows",
+            "bacteria",
+            "bacterial",
+            "colony",
+            "population",
+            "decay",
+            "interest",
+            "deposit",
+            "рост",
+            "экспонент",
+        ),
     ),
     "logistic_growth": (
         "Growth limited by carrying capacity",
-        ("logistic", "carrying capacity", "limit", "ёмкост", "логист"),
+        ("logistic", "carrying capacity", "capacity", "limit", "ёмкост", "вместим", "логист"),
     ),
     "teacup_cooling": (
         "Cooling and first-order equilibration",
@@ -703,11 +720,39 @@ _METADATA = {
     ),
     "sir_epidemic": (
         "Susceptible infectious recovered epidemic",
-        ("sir", "epidemic", "infection", "disease", "эпидем", "зараж", "болезн"),
+        (
+            "sir",
+            "susceptible",
+            "infectious",
+            "recovered",
+            "norovirus",
+            "epidemic",
+            "infection",
+            "disease",
+            "эпидем",
+            "зараж",
+            "болезн",
+        ),
     ),
     "predator_prey": (
         "Predator prey population dynamics",
-        ("predator", "prey", "fox", "rabbit", "хищник", "жертва", "лис", "кролик", "лотка"),
+        (
+            "predator",
+            "prey",
+            "fox",
+            "rabbit",
+            "wolf",
+            "wolves",
+            "deer",
+            "owl",
+            "owls",
+            "mice",
+            "хищник",
+            "жертва",
+            "лис",
+            "кролик",
+            "лотка",
+        ),
     ),
     "bass_diffusion": (
         "Product adoption and diffusion",
@@ -716,6 +761,10 @@ _METADATA = {
             "adoption",
             "diffusion",
             "product",
+            "advertising",
+            "recommendations",
+            "word of mouth",
+            "adopters",
             "продукт",
             "внедрен",
             "диффуз",
@@ -733,6 +782,15 @@ _METADATA = {
             "workforce",
             "employee",
             "hiring",
+            "hires",
+            "trainee",
+            "trainees",
+            "consultant",
+            "consultants",
+            "junior",
+            "senior",
+            "nurse",
+            "nurses",
             "rookie",
             "expert",
             "персонал",
@@ -765,8 +823,14 @@ _METADATA = {
         (
             "resource",
             "fish",
+            "fish stock",
+            "fishing",
             "forest",
             "harvest",
+            "hunting",
+            "hunting quota",
+            "regenerates",
+            "regeneration",
             "renewable",
             "рыб",
             "лес",
@@ -777,11 +841,35 @@ _METADATA = {
     ),
     "sirs_epidemic": (
         "Seasonal SIRS epidemic with waning immunity",
-        ("sirs", "seasonal epidemic", "waning immunity", "seasonal waves", "повторные волны"),
+        (
+            "sirs",
+            "seasonal",
+            "seasonal epidemic",
+            "recurring epidemic",
+            "repeated waves",
+            "temporary immunity",
+            "lose immunity",
+            "loss of immunity",
+            "immunity loss",
+            "waning immunity",
+            "seasonal waves",
+            "повторные волны",
+        ),
     ),
     "supply_chain_bullwhip": (
         "Supply chain oscillations and bullwhip effect",
-        ("bullwhip", "supply chain", "customer demand", "order amplification", "цепочка поставок"),
+        (
+            "bullwhip",
+            "supply chain",
+            "customer demand",
+            "order amplification",
+            "supplier",
+            "retailer",
+            "demand increase",
+            "holiday demand",
+            "purchasing orders",
+            "цепочка поставок",
+        ),
     ),
     "student_club": (
         "Student club growth, capacity, burnout and campaigns",
@@ -835,10 +923,29 @@ def pattern_prompt(pattern: Pattern | None) -> str:
         "purpose": pattern.description,
         "time": pattern.document.time.model_dump(mode="json"),
         "variables": [],
+        "equations": [],
         "tables": [item.model_dump(mode="json") for item in pattern.document.tables],
     }
+    names = {item.id: item.id for item in pattern.document.variables}
+    table_names = {item.id: item.id for item in pattern.document.tables}
+
+    def prompt_value(expression):
+        if (number := constant_number(expression)) is not None:
+            return number
+        return expression_to_vensim(expression, names, table_names)
+
     for variable in pattern.document.variables:
         item = variable.model_dump(mode="json")
         item.pop("derivative", None)
+        item.pop("expression", None)
+        if variable.kind == "stock":
+            item["initial"] = prompt_value(variable.initial)
+        elif variable.kind == "constant":
+            item["initial"] = prompt_value(variable.expression)
+        else:
+            item["initial"] = None
+            payload["equations"].append(
+                {"id": variable.id, "expression": prompt_value(variable.expression)}
+            )
         payload["variables"].append(item)
     return json.dumps(payload, ensure_ascii=False, indent=2)

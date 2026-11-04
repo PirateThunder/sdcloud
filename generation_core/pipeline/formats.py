@@ -169,6 +169,8 @@ class ExpressionParser:
             aliases = {"ln": "log", "log": "log10", "pow": "power"}
             function = re.sub(r"[\s_]+", "_", name.lower())
             function = aliases.get(function, function)
+            if function in {"delay1", "delay3", "smooth", "smooth3"} and len(args) == 3:
+                function = f"{function}i"
             return call(function, *args)
         if name.lower() == "time":
             return time()
@@ -347,8 +349,12 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
                     "ramp",
                     "delay1",
                     "delay3",
+                    "delay1i",
+                    "delay3i",
                     "smooth",
                     "smooth3",
+                    "smoothi",
+                    "smooth3i",
                     "initial",
                 }
             )
@@ -529,8 +535,12 @@ def import_xmile(source: str, *, source_name: str = "model.xmile") -> ModelDocum
                         "ramp",
                         "delay1",
                         "delay3",
+                        "delay1i",
+                        "delay3i",
                         "smooth",
                         "smooth3",
+                        "smoothi",
+                        "smooth3i",
                         "initial",
                     }
                 )
@@ -613,7 +623,7 @@ def export_xmile(document: ModelDocument) -> str:
                 variable.units, variable.units_raw
             )
         if variable.kind == "stock":
-            ET.SubElement(element, f"{{{namespace}}}eqn").text = expression_to_vensim(
+            ET.SubElement(element, f"{{{namespace}}}eqn").text = _expression_to_xmile(
                 variable.initial, names, table_names
             )
             for flow in document.variables:
@@ -624,10 +634,17 @@ def export_xmile(document: ModelDocument) -> str:
                 if flow.source and flow.source.kind == "stock" and flow.source.id == variable.id:
                     ET.SubElement(element, f"{{{namespace}}}outflow").text = flow.label or flow.id
         else:
-            ET.SubElement(element, f"{{{namespace}}}eqn").text = expression_to_vensim(
+            ET.SubElement(element, f"{{{namespace}}}eqn").text = _expression_to_xmile(
                 variable.expression, names, table_names
             )
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
+
+
+def _expression_to_xmile(expression: Expression, names: dict[str, str], tables: dict[str, str]) -> str:
+    rendered = expression_to_vensim(expression, names, tables)
+    for name in ("delay1i", "delay3i", "smoothi", "smooth3i"):
+        rendered = re.sub(rf"\b{name.upper()}\(", f"{name[:-1].upper()}(", rendered)
+    return rendered
 
 
 def import_model(source: str, file_format: str, *, source_name: str) -> ModelDocument:

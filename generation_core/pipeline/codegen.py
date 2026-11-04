@@ -115,14 +115,11 @@ def expression_to_vensim(
         )
         return f"({left} {operators[expression.op]} {right})"
     if isinstance(expression, BooleanExpression):
-        operator = " AND " if expression.op == "and" else " OR "
-        return (
-            "("
-            + operator.join(
-                expression_to_vensim(item, names, tables, subscripts) for item in expression.args
-            )
-            + ")"
+        function = "MIN" if expression.op == "and" else "MAX"
+        args = ", ".join(
+            expression_to_vensim(item, names, tables, subscripts) for item in expression.args
         )
+        return f"{function}({args})"
     if isinstance(expression, LookupExpression):
         return f"{_name(tables[expression.table])}({expression_to_vensim(expression.arg, names, tables, subscripts)})"
     if isinstance(expression, IfExpression):
@@ -132,7 +129,10 @@ def expression_to_vensim(
         return f"IF THEN ELSE({condition}, {then}, {otherwise})"
     if isinstance(expression, CallExpression):
         names_map = {"log": "LN", "power": "POWER", "if_then_else": "IF THEN ELSE"}
-        function = names_map.get(expression.name, expression.name).upper()
+        function_name = expression.name
+        if function_name in {"delay1", "delay3", "smooth", "smooth3"} and len(expression.args) == 3:
+            function_name = f"{function_name}i"
+        function = names_map.get(function_name, function_name).upper()
         arguments = list(expression.args)
         if expression.name in {"sum", "prod", "vmin", "vmax"} and isinstance(
             arguments[0], ReferenceExpression

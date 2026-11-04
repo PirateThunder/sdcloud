@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4 и reliability/local-LLM hardening 0.2.1 реализованы; benchmark 26×3 завершён, но quality targets не достигнуты
+**Статус:** этапы 0–4 и hardening 0.2.2 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -452,11 +452,14 @@ Idempotency import включает hash содержимого файла и op
 ### 10.2 Structured output и repair
 
 - Strict JSON Schema применяется на brief, variables, equations, chat и repair; Pydantic validation обязателен независимо от provider.
+- Stock и constant получают ненулевой `initial` на structure-стадии. Значение constant сохраняется на equations-стадии; самоссылка не заменяет параметр. Если flow endpoints указывают на stock, kind нормализуется, но отсутствующее initial не выдумывается движком.
+- Prompt использует числовые initial либо DSL; голое `lit` не считается значением и отклоняется как unknown reference.
 - Unstructured fallback не выполняется молча: доступен только через явный `*_ALLOW_UNSTRUCTURED_FALLBACK=1`.
 - Repair получает текущий fragment и structured errors. Общий bounded budget по умолчанию — 3 попытки на run и покрывает malformed JSON, ранние schema/reference errors и semantic repairs.
-- Unknown references в stock initial и expression IDs проверяются на variables/equations стадиях до полной сборки документа.
+- Unknown references в stock initial и expression IDs проверяются на variables/equations стадиях до полной сборки документа; equations для stocks игнорируются, так как derivative определяется topology.
+- Для Bass diffusion semantic validation требует зависимость adoption от потенциальных пользователей, а word-of-mouth — от обеих групп. Units-only прохождение не признаётся достаточным доказательством корректной модели.
 - Нет автоматического paid retry после окончательной semantic failure.
-- Repair не может молча удалить ошибочный stock/flow, изменить units ради прохождения или заменить неизвестную функцию нулём.
+- Repair не может молча удалить ошибочный stock/flow, изменить units ради прохождения или заменить неизвестную функцию нулём. Пропущенные в ответе variables сохраняются. При units-only ошибках kinds и topology сохраняются; при topology/semantic ошибках kind и endpoints можно исправить, включая восстановление constant, ошибочно принятого за stock.
 - После repair обязательны полная повторная validation и smoke-симуляция готовой модели; repair-ответы сохраняются в workdir.
 
 ### 10.3 Pattern library
@@ -475,7 +478,7 @@ Idempotency import включает hash содержимого файла и op
 - student club с capacity, burnout и campaigns;
 - Lorenz, Van der Pol и Duffing.
 
-Каждый pattern содержит description, tags, canonical IR, units, topology, assumptions, expected qualitative behavior и numerical fixture. Подбор первой версии — deterministic по tags/keywords; embeddings добавляются только при измеримом выигрыше.
+Каждый pattern содержит description, tags, canonical IR, units, topology, assumptions, expected qualitative behavior и numerical fixture. Подбор первой версии — deterministic по tags/keywords; embeddings добавляются только при измеримом выигрыше. В prompt передаётся не сырой AST, а соответствующее structure schema представление: `initial` у stock/constant, числа и короткие DSL-формулы, topology flows без equations. Это представление не меняет canonical модель и покрыто offline contract test.
 
 Нельзя копировать текущий fixture `predation` как приток predators без conversion efficiency в библиотеку «правильных» примеров.
 
@@ -705,7 +708,7 @@ uv run ruff check .
 - [Automated Modelization of Dynamic Systems, 2018](https://www.fruct.org/files/publications/volume-23/acm23/Per.pdf).
 - [Original-project test-model corpus](https://github.com/alexprey/test-models).
 
-## 19. Состояние реализации
+## 19. Состояние реализации (baseline 0.2.0)
 
 - Реализованы этапы 0–4 и hardening 0.2.0: ModelDocument 2.0, scientific hardening, SD language, Vensim/XMILE interoperability, ModelBrief, 16 validated patterns, DSL normalization, strict output, ранний bounded repair, subscripts, external series, scenarios, sensitivity analysis и calibration.
 - Offline suite: 96 passed; Ruff: All checks passed.
@@ -733,3 +736,26 @@ uv run ruff check .
 - CLI predator-prey: 22,6 с, 0 repairs, 10 variables, 41 finite point. REST teacup: 14,1 с, 0 repairs, 21 finite point. Продуктовый чат создал две версии, ответил на вопрос, запустил simulation и Python export.
 - Pattern selection покрыт classification golden suite: все 26 описаний выбирают ожидаемый archetype. Полный local benchmark 26×3: 78 cases, executable 83,3%, semantic 83,3%, behavior 75,6%, average 31,256 с. Все 26 описаний имеют хотя бы один semantic success; 14 имеют behavior success во всех трёх запусках. Bullwhip 3/3, student club 2/3.
 - Quality targets 90/85/85% не достигнуты. Остаточные классы: malformed JSON/DSL, unknown references и units, статические supply-delay модели, превышение 16K context в одном repair. Validators не ослаблялись. Offline suite: 104 tests; Ruff зелёный.
+
+## 22. Протокол независимой проверки
+
+- `pipeline/benchmark_holdout_prompts.json` содержит 16 описаний, по одному на каждый archetype, включая все behavior-oracles. После анализа live-ошибок этот набор является validation-corpus, а не неприкосновенным final holdout.
+- `pipeline/benchmark_confirmation_prompts.json` содержит 16 дополнительных описаний для confirmation после завершения итераций генерации. До live-прогона этого набора нельзя заявлять его metrics; classifier проверяется отдельным offline-тестом на всех corpus.
+- Основной, validation и confirmation benchmarks запускаются раздельно через `--prompts-file`. Каждый имеет независимые metrics, provider/model/structured-output metadata, max repairs, concurrency, SHA-256 corpus и pipeline source, а также output JSON; их нельзя смешивать с development baseline. Точный prompt сохраняется в каждом case. Concurrency по умолчанию 1, ограничивается semaphore и не меняет порядок результатов; для локальной GPU не повышается без отдельной проверки.
+- `--artifacts-dir` сохраняет model, simulation, error и repair stages каждого case, включая успешные raw LLM responses до parsing. Перед повторным случаем прежние JSON-стадии этого case очищаются, чтобы не смешивать разные ревизии.
+- Изменения направлены на structured generation, AST normalization, repair и scientific capabilities. Units/topology/semantic validators и behavior-oracles не ослабляются для повышения pass-rate.
+
+## 23. Validation hardening после 0.2.1
+
+- Предыдущий local 26×3 (`out/benchmark-local-26x3-v4.json`): executable/semantic/behavior 92,3%; это не свежий GPU-прогон текущего кода.
+- Первый OpenRouter validation 16×3 (`qwen/qwen3-30b-a3b-instruct-2507`): 72,9%/72,9%/66,7%. Разобраны transport errors, несогласованные units, undeclared id, неверные assumptions paths и численная нестабильность.
+- Network retries ограничены и отделены от semantic repair. Pattern передаёт compact DSL equations на generation/repair-стадиях; assumptions paths нормализуются только при однозначном соответствии явно заданным значениям.
+- Targeted validation семи ранее проблемных archetypes: 7/7 executable, semantic и behavior. Все 18 эталонных behavior-oracles на трёх corpus также пройдены.
+- Каждый завершённый benchmark-case сохраняет `case.json`; отчёт продолжает содержать corpus/pipeline hashes и provider settings. Для длительных прогонов `out/` можно подключить как `/app/work_api`, чтобы сохранять артефакты на host.
+- Полный validation v9: executable 83,3%, semantic 83,3%, behavior 79,2%; targets не достигнуты. Исправлены monetary budget в Bass, equilibrium defaults, supply/bullwhip repair, `Time` и `IF THEN ELSE(...)`. Targeted v10: 5/5 по всем метрикам.
+- Добавлена ранняя проверка undeclared stock endpoints; targeted savings v12 — 1/1 без repairs. ModelBrief проверяется на незапрошенные monetary inputs: targeted Bass/inventory v13 — 2/2, Bass исправлен двумя ранними repairs.
+- Полный v11: 85,4% executable, 85,4% semantic, 83,3% behavior; confirmation v12 — 81,25% по всем метрикам. Targets не достигнуты. Добавлены anti-loop instructions и truncation diagnostics; targeted SIR v14 — 1/1 без repairs.
+- Для новых нормированных Lorenz/VDP/Duffing equations берутся из validated pattern, с archetype-provenance и сохранением initial/constants. Explicit physical models и редактирование используют LLM path. Targeted oscillators v16 — 3/3.
+- Исходный OpenRouter 26×3: 94,87% executable/semantic/behavior. Confirmation v16: 95,83% executable, 95,83% semantic, 93,75% behavior. Validation v13: 100% по всем метрикам. Targets превышены на всех трёх corpus; targeted Lorenz после brief-subset исправления — 1/1 без repairs.
+- Локальная 30B (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, RTX 5090, concurrency=1): исходный 26×3 — 98,7% по всем метрикам; held-out 16×3 — 97,9% executable/semantic и 95,8% behavior. Pipeline hash — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
+- Стандартные проверки: 143 core tests, 20 backend tests, 12 frontend tests, 2/2 browser E2E; lint, typecheck, lock и frontend build зелёные. Local quality gate пройден; production deployment не выполнялся.

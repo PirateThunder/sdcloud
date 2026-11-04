@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .exceptions import ModelValidationError
-from .ir import FUNCTION_SIGNATURES
+from .ir import FUNCTION_SIGNATURES, constant_number
 from .schemas import (
     BinaryExpression,
     BooleanExpression,
@@ -25,9 +26,9 @@ from .schemas import (
 
 _TOKEN = re.compile(
     r"\s*(?:(?P<number>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
-    r"|(?P<quoted>'[A-Za-z_][A-Za-z0-9_]*'|\"[A-Za-z_][A-Za-z0-9_]*\")"
+    r"|(?P<quoted>'[^']*'|\"[^\"]*\")"
     r"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<op>\*\*|<=|>=|==|!=|&&|\|\||<>|[-+*/%^<>(),!=]))"
+    r"|(?P<op>\*\*|<=|>=|==|!=|&&|\|\||<>|[-+*/%^<>()\[\],!=]))"
 )
 _TRANSLATION = str.maketrans(
     {"×": "*", "−": "-", "–": "-", "≤": "<=", "≥": ">=", "≠": "!=", "^": "^"}
@@ -154,6 +155,16 @@ class ExpressionParser:
             return BinaryExpression(op="pow", args=(left, self.parse_unary()))
         return left
 
+    def parse_list(self) -> list[Expression]:
+        result = []
+        if self.match("]") is None:
+            while True:
+                result.append(self.parse_or())
+                if self.match("]") is not None:
+                    break
+                self.expect(",")
+        return result
+
     def parse_primary(self) -> Expression:
         token = self.advance()
         if token.kind == "number":
@@ -163,20 +174,33 @@ class ExpressionParser:
             self.expect(")")
             return expression
         if token.kind == "quoted":
-            return ReferenceExpression(op="ref", name=token.value[1:-1])
+            content = token.value[1:-1]
+            if re.fullmatch(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", content):
+                return LiteralExpression(op="lit", value=float(content))
+            return ReferenceExpression(op="ref", name=content)
         if token.kind != "name":
             raise ModelValidationError(
                 f"expected a number, identifier or parenthesis at position {token.position}"
             )
+        name = token.value.lower()
+        if name == "if" and self.current.value.lower() == "then":
+            self.advance()
+            if self.current.value.lower() != "else":
+                raise ModelValidationError("expected ELSE after IF THEN")
+            self.advance()
+            name = "if_then_else"
         if self.match("(") is not None:
             args = []
             if self.match(")") is None:
                 while True:
-                    args.append(self.parse_or())
+                    if self.match("[") is not None:
+                        args.extend(self.parse_list())
+                    else:
+                        args.append(self.parse_or())
                     if self.match(")") is not None:
                         break
                     self.expect(",")
-            return self._call(token.value.lower(), args)
+            return self._call(name, args)
         constants = {
             "true": LiteralExpression(op="lit", value=True),
             "false": LiteralExpression(op="lit", value=False),
@@ -185,16 +209,23 @@ class ExpressionParser:
         }
         if token.value in constants:
             return constants[token.value]
-        if token.value == "time":
+        if token.value.lower() == "time":
             return TimeExpression(op="time")
         return ReferenceExpression(op="ref", name=token.value)
 
     def _call(self, name: str, args: list[Expression]) -> Expression:
         if name == "ref" and len(args) == 1 and isinstance(args[0], ReferenceExpression):
             return args[0]
-        if name == "lit" and len(args) == 1 and isinstance(args[0], LiteralExpression):
-            return args[0]
-        if name == "call" and len(args) == 2 and isinstance(args[0], ReferenceExpression):
+        if name == "lit" and len(args) == 1:
+            if isinstance(args[0], LiteralExpression):
+                return args[0]
+            if isinstance(args[0], ReferenceExpression) and re.fullmatch(
+                r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", args[0].name
+            ):
+                return LiteralExpression(op="lit", value=float(args[0].name))
+            if (number := constant_number(args[0])) is not None:
+                return LiteralExpression(op="lit", value=number)
+        if name == "call" and len(args) >= 2 and isinstance(args[0], ReferenceExpression):
             return self._call(args[0].name, args[1:])
         if name == "time" and not args:
             return TimeExpression(op="time")
@@ -232,6 +263,8 @@ class ExpressionParser:
             if len(args) != 2 or not isinstance(args[0], ReferenceExpression):
                 raise ModelValidationError("lookup expects a table identifier and one expression")
             return LookupExpression(op="lookup", table=args[0].name, arg=args[1])
+        if name in {"delay1", "delay3", "smooth", "smooth3"} and len(args) == 3:
+            name = f"{name}i"
         signature = FUNCTION_SIGNATURES.get(name)
         if signature is None:
             raise ModelValidationError(f"function is not allowed: {name}")
@@ -257,6 +290,8 @@ def _normalized_ast(value: dict[str, Any]) -> dict[str, Any]:
     if isinstance(op, str):
         op = op.lower()
         result["op"] = op
+    if op == "ref" and isinstance(result.get("name"), str) and result["name"].lower() == "time":
+        return {"op": "time"}
     if op in FUNCTION_SIGNATURES:
         args = result.get("args", [result["arg"]] if "arg" in result else [])
         if isinstance(args, dict | str | int | float):
@@ -370,6 +405,13 @@ def _normalize_semantics(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_expression(value: Any) -> dict[str, Any]:
+    if isinstance(value, str) and value.lstrip().startswith("{"):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, dict):
+            return normalize_expression(decoded)
     if isinstance(value, str):
         expression = parse_expression(value)
     elif isinstance(value, bool | int | float):
@@ -381,6 +423,12 @@ def normalize_expression(value: Any) -> dict[str, Any]:
             raise ModelValidationError(f"invalid expression AST: {exc}") from exc
     else:
         raise ModelValidationError(f"expression must be a formula, number or AST object: {value!r}")
+    if (
+        isinstance(expression, CallExpression)
+        and expression.name in {"delay1", "delay3", "smooth", "smooth3"}
+        and len(expression.args) == 3
+    ):
+        expression = expression.model_copy(update={"name": f"{expression.name}i"})
     if isinstance(expression, CallExpression):
         signature = FUNCTION_SIGNATURES.get(expression.name)
         if signature is not None and not signature[0] <= len(expression.args) <= signature[1]:

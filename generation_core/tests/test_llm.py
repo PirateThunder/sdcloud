@@ -126,3 +126,91 @@ def test_malformed_json_contains_repair_context():
     with pytest.raises(LLMResponseError) as error:
         parse_json_response("{broken")
     assert error.value.response_text == "{broken"
+
+
+async def test_transport_failure_is_retried_without_using_repair_budget():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) < 3:
+            raise httpx.ConnectError("connection lost", request=request)
+        return response_with_content('{"ok": true}')
+
+    llm = OpenAICompatibleLLM(
+        model="local",
+        base_url="http://vllm:8000/v1",
+        transport=httpx.MockTransport(handler),
+        request_retries=2,
+        retry_delay=0,
+    )
+    try:
+        assert await llm.chat_json("Return JSON", stage="brief") == {"ok": True}
+    finally:
+        await llm.close()
+    assert len(requests) == 3
+
+
+async def test_rate_limit_is_retried_but_client_schema_error_is_not():
+    statuses = iter([429, 200, 400])
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        status = next(statuses)
+        return response_with_content('{"ok": true}', status=status)
+
+    llm = OpenAICompatibleLLM(
+        model="local",
+        base_url="http://vllm:8000/v1",
+        transport=httpx.MockTransport(handler),
+        request_retries=2,
+        retry_delay=0,
+    )
+    try:
+        assert await llm.chat_json("Return JSON", stage="brief") == {"ok": True}
+        with pytest.raises(LLMError, match="HTTP 400"):
+            await llm.chat_json("Return JSON", stage="variables")
+    finally:
+        await llm.close()
+    assert len(requests) == 3
+
+
+async def test_empty_content_has_actionable_finish_reason():
+    response = httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+    )
+    llm = OpenAICompatibleLLM(
+        model="local",
+        base_url="http://vllm:8000/v1",
+        transport=httpx.MockTransport(lambda request: response),
+    )
+    try:
+        with pytest.raises(LLMResponseError, match="finish_reason=length"):
+            await llm.chat_json("Return JSON", stage="brief")
+    finally:
+        await llm.close()
+
+
+async def test_truncated_json_reports_token_limit_and_preserves_excerpt():
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {"message": {"content": '{"variables": ['}, "finish_reason": "length"}
+            ]
+        },
+    )
+    llm = OpenAICompatibleLLM(
+        model="local",
+        base_url="http://vllm:8000/v1",
+        transport=httpx.MockTransport(lambda request: response),
+        max_tokens=123,
+    )
+    try:
+        with pytest.raises(LLMResponseError, match="truncated.*max_tokens=123") as error:
+            await llm.chat_json("Return JSON", stage="variables")
+    finally:
+        await llm.close()
+    assert error.value.response_text == '{"variables": ['
