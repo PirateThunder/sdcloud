@@ -23,6 +23,154 @@ MODEL_BRIEF_PROMPT = """\
 Не придумывай feedback обязательно. Для predator-prey явно перечисли predation и рост хищников за счёт добычи. Для эпидемии укажи переходы между stocks.
 """
 
+COMPONENT_BRIEF_GUIDANCE = """\
+Для новой модели вне проверенного pattern используй typed components, если они покрывают
+механизмы системы. Builder сам построит variables, equations, units коэффициентов и topology.
+Не выдумывай новый kind. Если механизм не покрыт, верни components=[] для обычного pipeline.
+Если components непустой, задай time={unit, initial_time, final_time, time_step, saveper};
+возьми horizon и unit из запроса. Выбирай time_step не больше четверти самой маленькой
+time constant. saveper должен быть целым кратным time_step, обычно равным ему; для более
+чем 9999 внутренних шагов builder увеличит только saveper, сохраняя time_step.
+
+Доступные механизмы:
+- first_order: source stock передаёт target stock или cloud:<id>. Ровно один из coefficient
+  (1/(source*time) с conversion при необходимости) и time_constant. Укажи initial_source,
+  initial_target, source_units, target_units, time_unit. Не используй source=target.
+- conditional_inflow: внешний rate поступает в stock с start_time до end_time; outflow —
+  stock*elimination_rate. Подходит для infusion с последующей элиминацией. Укажи stock,
+  inflow, outflow, rate, start_time, end_time, elimination_rate, initial, units, time_unit.
+- queue: arrivals добавляет arrival_rate, service=min(max(stock,0)/service_time,max_service).
+  Для конечного входного потока задай arrival_start_time и arrival_end_time, иначе последний=null.
+  Укажи stock, arrivals, service, service_time, max_service, arrival_rate, initial, units,
+  time_unit. Не добавляй отдельный first_order outflow для той же очереди.
+- scheduled_flow: один внешний приток или расход, rate меняется на rate_after в change_time.
+  source/target — stock или cloud:<id>, хотя бы один stock; initial_source, initial_target,
+  source_units и target_units одинаковы, time_unit задан. Для разряда source=stock,
+  target=cloud:sink. Не заменяй его двумя conditional_inflow с одинаковым stock.
+- delay: третье транспортное запаздывание input_rate с delay_time и явным initial_delayed_rate;
+  consumption_time задаёт последующий first-order расход, либо null для нулевого расхода.
+  input_rate_after и rate_change_time задают изменение входа, иначе оба null. Укажи stock,
+  inflow, outflow, initial_stock, stock_units, time_unit.
+- polynomial_ode: stock с initial, units, time_unit, terms и parameters. Каждый term содержит
+  coefficient (число или id parameter), expression БЕЗ coefficient и без общего знака,
+  sign=1|-1 и name. Например -4*position — coefficient=4, expression="position", sign=-1.
+  Сумма terms задаёт derivative, не включай её в expression. Ссылки на coefficient внутри
+  того же expression запрещены. Составляй несколько terms для суммы скорости.
+  parameters: id, value, role=rate|threshold|scale, units=null или base units. Для threshold
+  без units builder возьмёт units текущего stock; scale без units — dimensionless; rate без
+  units — 1/time, кроме coefficient, чьи units выводятся из stock/time - expression units.
+  Для пороговых значений в выражении используй named threshold, не голый dimensional literal.
+  Для dimensionless числового нормировщика (например /3) допустим числовой literal.
+
+Все ids — ASCII snake_case, уникальные внутри модели. В каскаде первого порядка можно
+повторить промежуточный stock только с теми же initial и units: builder объединит его.
+Для каждого ODE stock создавай ровно один component и перечисляй все его terms внутри.
+Не копируй числа из этих правил: бери параметры из запроса. Для выбранных иллюстративных
+значений добавь краткие assumptions с source="llm_inferred" и непустым value.
+
+Примеры синтаксиса, не параметры для копирования:
+first_order:
+{{
+  "kind": "first_order", "source": "source_stock", "target": "cloud:sink",
+  "flow": "transfer", "coefficient": 0.2, "time_constant": null,
+  "initial_source": 100, "initial_target": 0,
+  "source_units": {{"item": 1}}, "target_units": null, "time_unit": "day"
+}}
+Для target=stock вместо target_units=null передай фактические units stock. Можно вместо
+coefficient задать time_constant=5; не задавай оба, кроме взаимно обратных значений.
+
+conditional_inflow:
+{{
+  "kind": "conditional_inflow", "stock": "amount", "inflow": "supply",
+  "outflow": "elimination", "rate": 5, "start_time": 0, "end_time": 2,
+  "elimination_rate": 0.1, "initial": 0, "units": {{"item": 1}},
+  "time_unit": "minute"
+}}
+
+queue:
+{{
+  "kind": "queue", "stock": "backlog", "arrivals": "arrivals",
+  "service": "service", "service_time": 0.5, "max_service": 10,
+  "arrival_rate": 3, "initial": 20, "units": {{"item": 1}},
+  "time_unit": "minute", "arrival_start_time": 0, "arrival_end_time": null
+}}
+
+scheduled_flow:
+{{
+  "kind": "scheduled_flow", "source": "inventory", "target": "cloud:consumption",
+  "flow": "consumption", "rate": 2, "rate_after": 5, "change_time": 10,
+  "initial_source": 100, "initial_target": 0,
+  "source_units": {{"item": 1}}, "target_units": null, "time_unit": "day"
+}}
+Обязательно задай flow, rate, rate_after и change_time. Не добавляй отдельный запас для rate.
+
+delay:
+{{
+  "kind": "delay", "stock": "inventory", "inflow": "transport",
+  "outflow": "consumption", "input_rate": 8, "delay_time": 3,
+  "initial_stock": 0, "initial_delayed_rate": 0,
+  "stock_units": {{"item": 1}}, "time_unit": "day",
+  "consumption_time": 2, "input_rate_after": 12, "rate_change_time": 6
+}}
+Delay уже включает delayed inflow и consumption: не добавляй scheduled_flow или first_order
+для тех же процессов и не создавай отдельный stock для input_rate.
+
+polynomial_ode (logistic growth и loss):
+{{
+  "kind": "polynomial_ode", "stock": "state", "initial": 10,
+  "units": {{"state": 1}}, "time_unit": "time",
+  "terms": [
+    {{"coefficient": "growth_rate", "expression": "state * (1 - state / capacity)",
+      "sign": 1, "name": "growth"}},
+    {{"coefficient": 0.05, "expression": "state", "sign": -1, "name": "loss"}}
+  ],
+  "parameters": [
+    {{"id": "growth_rate", "value": 0.2, "role": "rate", "units": null}},
+    {{"id": "capacity", "value": 100, "role": "threshold", "units": null}}
+  ]
+}}
+Для coefficient parameter оставляй units=null: builder выведет размерность. Для threshold
+тоже можно null. Не сокращай выражение state*(driver-threshold) до state*driver: threshold
+является частью динамики. Числа и знаки в expression не дублируй coefficient/sign.
+Сохраняй КАЖДЫЙ численный множитель из уравнения: state^3/3 требует
+expression="state^3/3" или coefficient=1/3. Для outer_rate*(...-inner_rate*state)
+нужен coefficient=outer_rate*inner_rate для state либо coefficient=outer_rate с
+expression="inner_rate*state". Не создавай parameter, который не используется
+в coefficient или expression: builder отклонит такие декоративные параметры.
+Не используй один named coefficient для слагаемых с разными units. Для additive constant
+предпочитай числовой coefficient и expression="1" либо отдельный coefficient с units=null;
+не переиспользуй rate из stock term, если additive constant требует stock/time.
+Не удаляй state-фактор из multiplicative term: inner_rate*state нельзя заменять на inner_rate.
+"""
+
+COMPONENT_PLAN_PROMPT = """\
+Выбери и задай параметры typed mechanisms для модели. Не пиши переменные, equations,
+общие рассуждения или новый ModelBrief: только ComponentPlan JSON.
+
+Описание системы:
+{description}
+
+Уже готовый ModelBrief:
+{brief}
+
+{component_guidance}
+
+Верни ТОЛЬКО JSON:
+{{
+  "components": [],
+  "time": null,
+  "assumptions": []
+}}
+
+Для components непустого списка time обязателен. Численные значения из запроса копируй точно,
+не заменяй их нулями, именами полей или placeholder-строками. units — только словарь
+фактических единиц, например {{"person": 1}} или {{}}; никаких "unit", "base_unit",
+"goal", "source" в качестве выдуманных размерностей. Для queue не дублируй delay или
+first_order с теми же процессами. Для delay используй ровно один component, включая его
+собственный consumption_time. Для spring position имеет derivative=velocity, а velocity —
+заданное acceleration. Не добавляй assumptions для явно заданных параметров.
+"""
+
 VARIABLE_EXTRACTION_PROMPT = """\
 Ты проектируешь структуру системно-динамической модели.
 
@@ -34,6 +182,8 @@ ModelBrief:
 
 Проверенный pattern, используй его как смысловой ориентир:
 {pattern}
+
+{ode_guidance}
 
 Верни ТОЛЬКО JSON-объект:
 {{
@@ -55,6 +205,12 @@ ModelBrief:
 - Fractional growth/adoption/recommendation/mortality rate имеет units 1/time,
   а не person/time или recommendation/time. Если flow=stock*rate, units потока уже
   получается из stock/time; не используй stock вместо такого flow без rate.
+- Голый числовой literal безразмерен. Для dimensional rate, time constant или threshold
+  создавай именованную constant с корректными units и используй её id. Не используй
+  безразмерное 1.0 как время или conversion coefficient.
+- derivative stock имеет units stock/time: position/time — velocity, velocity/time —
+  acceleration. Не путай acceleration и force без mass conversion. Derivative и flow
+  topology должны быть согласованы, а не дублировать разные уравнения.
 - Для каждого stock укажи initial как число или DSL-формулу, например 1000 или
   "total_population - initial_infectious". initial=null для stock ЗАПРЕЩЁН; ноль разрешён.
 - Каждое накопление из ModelBrief.stocks должно иметь kind="stock", не constant и не flow.
@@ -156,6 +312,33 @@ smooth, smooth3, smoothi, smooth3i, initial.
 - Не используй INTEG: derivatives вычисляются из topology.
 - Не меняй структуру, topology, начальные значения и units.
 - Нулевые values допустимы. Не используй Python, imports, lambda или произвольные функции.
+"""
+
+BRIEF_REPAIR_PROMPT = """\
+Ответ стадии brief не прошёл проверку. Исправь его, не начинай другую модель.
+
+Ошибка:
+{error}
+
+Исходное задание:
+{original_prompt}
+
+Прежний ответ:
+{response}
+
+Верни ТОЛЬКО один JSON-ОБЪЕКТ верхнего уровня, НЕ массив и не список boundaries.
+Сохрани предметную область и заполни все обязательные поля:
+{{
+  "goal": "цель модели",
+  "boundaries": ["границы модели"],
+  "time_horizon": "горизонт",
+  "time_unit": "year",
+  "aggregation": "medium",
+  "stocks": ["ключевые накопления"],
+  "flows": ["процессы изменения stocks"],
+  "exogenous_inputs": ["внешние параметры"],
+  "expected_feedback_loops": ["ожидаемые петли"]
+}}
 """
 
 STAGE_REPAIR_PROMPT = """\

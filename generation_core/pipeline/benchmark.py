@@ -28,10 +28,158 @@ def _sign_changes(series: list[float]) -> int:
     )
 
 
-def _expected_behavior(prompt: dict, result) -> tuple[bool, dict]:
+def _requires_dynamic(prompt: dict) -> bool:
+    expected = prompt.get("expected_behavior")
+    return not isinstance(expected, dict) or expected.get("kind") != "steady_state"
+
+
+def _custom_behavior(expected: dict, result) -> tuple[bool, dict]:
+    kind = expected.get("kind")
+    if kind == "conservation":
+        names = expected.get("variables", [])
+        if not names or any(name not in result.variables for name in names):
+            return False, {"missing_variables": names}
+        totals = [
+            sum(result.variables[name][index] for name in names)
+            for index in range(len(result.time))
+        ]
+        drift = max(totals) - min(totals)
+        tolerance = expected.get("tolerance", 1e-6)
+        return drift <= tolerance, {"drift": drift, "tolerance": tolerance}
+
+    variable = expected.get("variable")
+    series = result.variables.get(variable, [])
+    if not series:
+        return False, {"missing_variable": variable}
+    if kind == "steady_state":
+        target = expected["value"]
+        tolerance = expected.get("tolerance", 1e-6)
+        deviation = max(abs(value - target) for value in series[max(0, len(series) * 9 // 10) :])
+        nonnegative = not expected.get("nonnegative", False) or min(series) >= 0
+        return deviation <= tolerance and nonnegative, {
+            "final": series[-1],
+            "target": target,
+            "max_deviation": deviation,
+            "min": min(series),
+            "nonnegative": nonnegative,
+        }
+    if kind == "analytic_exponential":
+        initial = expected["initial"]
+        final_time = expected.get("time", result.time[-1])
+        target = initial * math.exp(expected["rate"] * final_time)
+        tolerance = expected.get("tolerance", 0.05)
+        error = abs(series[-1] - target)
+        return error <= tolerance * max(1, abs(target)), {
+            "expected": target,
+            "actual": series[-1],
+            "absolute_error": error,
+            "tolerance": tolerance,
+        }
+    if kind == "monotonic":
+        direction = expected.get("direction", "increasing")
+        if direction == "increasing":
+            passed = all(right >= left - 1e-9 for left, right in zip(series, series[1:], strict=False))
+        elif direction == "decreasing":
+            passed = all(right <= left + 1e-9 for left, right in zip(series, series[1:], strict=False))
+        else:
+            raise ValueError(f"unknown monotonic direction: {direction}")
+        return passed, {"initial": series[0], "final": series[-1], "direction": direction}
+    if kind == "sign_changes":
+        changes = _sign_changes(series[len(series) // 10 :])
+        minimum = expected.get("minimum", 2)
+        return changes >= minimum, {"sign_changes": changes, "minimum": minimum}
+    if kind == "cascade":
+        peak_index = max(range(len(series)), key=series.__getitem__)
+        after = expected.get("after", 0)
+        peak = series[peak_index]
+        return peak > series[0] and result.time[peak_index] >= after, {
+            "initial": series[0],
+            "peak": peak,
+            "peak_time": result.time[peak_index],
+            "after": after,
+        }
+    if kind == "delayed_response":
+        at = expected["at"]
+        index = min(range(len(result.time)), key=lambda item: abs(result.time[item] - at))
+        early_peak = max(series[:index], default=series[0])
+        later_peak = max(series[index:], default=series[index])
+        before_max = expected.get("before_max", math.inf)
+        after_min = expected.get("after_min", -math.inf)
+        return early_peak <= before_max and later_peak >= after_min, {
+            "early_peak": early_peak,
+            "later_peak": later_peak,
+            "before_max": before_max,
+            "after_min": after_min,
+        }
+    if kind == "event_change":
+        at = expected["at"]
+        before_index = min(range(len(result.time)), key=lambda item: abs(result.time[item] - at))
+        after_index = min(
+            range(len(result.time)),
+            key=lambda item: abs(result.time[item] - expected.get("after", result.time[-1])),
+        )
+        before = series[before_index]
+        after = series[after_index]
+        tolerance = expected.get("tolerance", 1e-9)
+        relation = expected.get("relation", "decrease")
+        if relation == "decrease":
+            passed = after < before - tolerance
+        elif relation == "increase":
+            passed = after > before + tolerance
+        elif relation == "above":
+            passed = after > expected["value"]
+        elif relation == "below":
+            passed = after < expected["value"]
+        else:
+            raise ValueError(f"unknown event relation: {relation}")
+        return passed, {"before": before, "after": after, "relation": relation}
+    if kind == "range":
+        lower = expected.get("min", -math.inf)
+        upper = expected.get("max", math.inf)
+        return min(series) >= lower and max(series) <= upper, {
+            "min": min(series),
+            "max": max(series),
+            "expected_min": lower,
+            "expected_max": upper,
+        }
+    raise ValueError(f"unknown expected behavior kind: {kind}")
+
+
+def _expected_behavior(
+    prompt: dict, result, stock_ids: set[str] | None = None
+) -> tuple[bool, dict]:
     expected = prompt.get("expected_behavior")
     if expected is None:
         return True, {}
+    if isinstance(expected, dict):
+        aliases = expected.get("aliases", [])
+        if stock_ids is not None and len(stock_ids) == 1:
+            aliases = [*aliases, *stock_ids]
+        expected_name = expected.get("variable")
+        if expected_name and expected_name not in result.variables:
+            candidates = {
+                name
+                for name in (stock_ids if stock_ids is not None else result.variables)
+                if name == f"{expected_name}s"
+                or name.startswith(f"{expected_name}_")
+                or name.endswith(f"_{expected_name}")
+            }
+            if len(candidates) == 1:
+                aliases = [*aliases, *candidates]
+        if not isinstance(aliases, list):
+            raise ValueError("behavior aliases must be a list")
+        resolved = next(
+            (
+                name
+                for name in (expected.get("variable"), *aliases)
+                if name in result.variables
+            ),
+            expected.get("variable"),
+        )
+        if resolved != expected.get("variable"):
+            passed, metrics = _custom_behavior({**expected, "variable": resolved}, result)
+            return passed, {**metrics, "resolved_variable": resolved}
+        return _custom_behavior(expected, result)
     if expected == "repeated_waves":
         series = result.variables.get("infectious", [])
         peaks = [
@@ -185,12 +333,12 @@ async def run_benchmark(
                     and case["topology_pass"]
                     and case["graph_pass"]
                 )
-                expected_pass, behavior_metrics = _expected_behavior(prompt, result)
+                expected_pass, behavior_metrics = _expected_behavior(prompt, result, stock_ids)
                 case["behavior_pass"] = (
                     case["semantic_pass"]
                     and case["finite"]
                     and case["full_horizon"]
-                    and case["dynamic"]
+                    and (case["dynamic"] or not _requires_dynamic(prompt))
                     and expected_pass
                 )
                 case["behavior_metrics"] = behavior_metrics

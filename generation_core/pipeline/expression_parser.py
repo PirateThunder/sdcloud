@@ -189,6 +189,17 @@ class ExpressionParser:
                 raise ModelValidationError("expected ELSE after IF THEN")
             self.advance()
             name = "if_then_else"
+        elif name == "if" and self.current.value != "(":
+            condition = self.parse_or()
+            if self.current.value.lower() != "then":
+                raise ModelValidationError("expected THEN after IF condition")
+            self.advance()
+            then = self.parse_or()
+            if self.current.value.lower() != "else":
+                raise ModelValidationError("expected ELSE after THEN expression")
+            self.advance()
+            otherwise = self.parse_or()
+            return IfExpression(op="if", condition=condition, then=then, otherwise=otherwise)
         if self.match("(") is not None:
             args = []
             if self.match(")") is None:
@@ -236,7 +247,7 @@ class ExpressionParser:
             for arg in args[1:]:
                 expression = BinaryExpression(op=name, args=(expression, arg))
             return expression
-        binary_operations = {"sub": "sub", "div": "div", "pow": "pow", "mod": "mod"}
+        binary_operations = {"sub": "sub", "div": "div", "divide": "div", "pow": "pow", "mod": "mod"}
         if name in binary_operations:
             if len(args) != 2:
                 raise ModelValidationError(f"{name} expects two arguments")
@@ -292,6 +303,8 @@ def _normalized_ast(value: dict[str, Any]) -> dict[str, Any]:
         result["op"] = op
     if op == "ref" and isinstance(result.get("name"), str) and result["name"].lower() == "time":
         return {"op": "time"}
+    if op == "divide":
+        result["op"] = op = "div"
     if op in FUNCTION_SIGNATURES:
         args = result.get("args", [result["arg"]] if "arg" in result else [])
         if isinstance(args, dict | str | int | float):
@@ -300,6 +313,9 @@ def _normalized_ast(value: dict[str, Any]) -> dict[str, Any]:
         op = "call"
     if op == "call" and isinstance(result.get("name"), str):
         result["name"] = result["name"].lower()
+        if result["name"] == "divide":
+            result["op"] = "div"
+            result.pop("name")
     if op == "lit" and isinstance(result.get("value"), str):
         literal = result["value"].strip()
         if literal.lower() in {"true", "false"}:

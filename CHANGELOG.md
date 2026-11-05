@@ -9,6 +9,59 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.3.0 — 2026-11-05
+
+Typed component generation и независимая проверка обобщения.
+
+- **Typed mechanisms**: для новых моделей вне pattern library добавлены `first_order`,
+  `conditional_inflow`, `queue`, `scheduled_flow`, `delay` и `polynomial_ode`. Короткий
+  ModelBrief отделён от ComponentPlan; валидный plan заменяет свободные variables/equations
+  детерминированным builder, а пустой plan сохраняет прежний pipeline. Известные archetypes
+  и редактирование base model не переключены на новый путь.
+- **LLM compatibility**: component stage использует JSON-only decoding после подтверждённых
+  ошибок guided decoding на 30B, но сохраняет Pydantic validation и bounded repair. Добавлены
+  однозначная нормализация descriptive ids, first-order parameters и безопасный разбор
+  unquoted numeric arithmetic через DSL без `eval`.
+- **Topology и units**: повторные stocks каскада объединяются только при совпадающих
+  initial/units/derivative/bounds; cloud не требует фиктивные units. Coefficient units
+  выводятся из stock/time − expression units; SI и compound unit names нормализуются.
+  Неиспользуемые ODE parameters запрещены. Additive ODE literals получают units соседних
+  слагаемых без изменения формулы. `divide(a,b)` нормализуется в `div`.
+- **Численная устойчивость**: isolated derivative становится эквивалентным net-flow;
+  несогласованная derivative сохраняется и отклоняется. Очередь ограничивает service без
+  скрытого clamp stock. Delay имеет явный initial rate; узкий delay/first_order adapter
+  устраняет дублирование consumption только при совпадающей topology. При длинном горизонте
+  увеличивается только SAVEPER, а TIME STEP сохраняется.
+- **Behavior evaluation**: добавлены analytic exponential, monotonic, cascade, sign changes,
+  delayed response, event change, steady state, range и conservation oracles. Independent
+  corpus содержит 14 предметных областей, новый confirmation corpus — ещё 10 описаний вне
+  pattern library. Исправлены ошибки самих oracles для equilibrium queue, finite burst и
+  distributed delay; one-stock resolution не зависит от произвольного имени переменной.
+- **Independent OpenRouter 14×3 v6**: 90,476% executable, semantic и behavior (38/42),
+  graph consistency среди принятых 100%, repair rate 26,19%, average duration 8,811 с.
+  Targets 90/85/85% достигнуты на этом development-independent corpus. Более ранний v5
+  имел 38,1%/31,0%; targeted hardening не подменяет полный benchmark. FitzHugh в v6 остался
+  0/3, transport 2/3, поэтому универсальная стабильность не заявляется.
+- **Independent confirmation 10×3**: после исправления idempotent delay consumption,
+  brief repair и conservative stock-name resolution итоговый v3 достиг 96,67%
+  executable/semantic (29/30) и 90% behavior (27/30), repair rate 16,67%, average 7,751 с.
+  Targets пройдены и на новом corpus. Nonlinear recovery имеет 2/3 executable и 1/3 behavior,
+  two-stage heating — 2/3 behavior; validators и behavior-oracles не ослаблялись.
+- **Внешняя совместимость**: новый `external_benchmark.py` проверяет внешние модели без LLM.
+  Исправлены Vensim blank comments и `.Control` parsing, reference blank cells и исходный
+  SAVEPER. SDXorg/test-models commit `21aab02739dc5187bc9564e4d3de14e575905d2f`:
+  154 Vensim-файла, 148 с эталоном, 16 импортированы и симулированы, 15 совпали численно.
+  Это отдельная interoperability-метрика, а не text-to-model dataset или LLM quality.
+- **Продуктовая интеграция**: brief schema больше не отправляет provider неиспользуемые
+  `$defs` component-моделей после удаления соответствующих полей; это устраняет HTTP 400
+  OpenRouter на первой стадии генерации. Добавлены русские подписи `components`, `equations`
+  и `smoke`, а браузерный тест не зависит от языка произвольного названия модели.
+- **Проверки и границы**: 200 core, 20 backend и 12 frontend tests, 2/2 browser E2E;
+  отдельный live-сценарий ceramics подтвердил сохранение typed `first_order`, LaTeX и симуляцию.
+  Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. Live-итерации выполнены только через
+  OpenRouter `qwen/qwen3-30b-a3b-instruct-2507`, GPU не использовался. RAG/LoRA не начинались;
+  production deployment по-прежнему не выполнялся.
+
 ## 0.2.2 — 2026-11-04
 
 Устойчивость генерации и воспроизводимая оценка на расширенных corpus.

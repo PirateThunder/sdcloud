@@ -1,11 +1,77 @@
 from __future__ import annotations
 
 from .ir import constant_number, dependencies, walk
-from .schemas import CallExpression, ModelDocument, TimeExpression, ValidationIssue
+from .schemas import (
+    BinaryExpression,
+    CallExpression,
+    ModelDocument,
+    ReferenceExpression,
+    TimeExpression,
+    UnaryExpression,
+    ValidationIssue,
+)
 
 
 def _issue(code: str, path: str, message: str) -> ValidationIssue:
     return ValidationIssue(code=code, severity="error", path=path, message=message)
+
+
+def _negative_outflow(expression, stock_id: str) -> bool:
+    for node in walk(expression):
+        if (
+            isinstance(node, UnaryExpression)
+            and node.op == "neg"
+            and isinstance(node.arg, ReferenceExpression)
+            and node.arg.name == stock_id
+        ):
+            return True
+        if isinstance(node, BinaryExpression) and node.op == "mul":
+            negative_factor = any(
+                (number := constant_number(arg)) is not None and number < 0
+                for arg in node.args
+            )
+            stock_reference = any(
+                isinstance(arg, ReferenceExpression) and arg.name == stock_id
+                for arg in node.args
+            )
+            if negative_factor and stock_reference:
+                return True
+    return False
+
+
+def _outflow_sign_issues(document: ModelDocument) -> list[ValidationIssue]:
+    names = (
+        "outflow",
+        "discharge",
+        "drain",
+        "removal",
+        "elimination",
+        "clearance",
+        "harvest",
+        "death",
+        "mortality",
+        "sales",
+        "consumption",
+    )
+    stocks = {item.id: item for item in document.variables if item.kind == "stock"}
+    issues = []
+    for flow in (item for item in document.variables if item.kind == "flow"):
+        if flow.source is None or flow.source.kind != "stock":
+            continue
+        if not any(token in flow.id.lower() for token in names):
+            continue
+        stock = stocks[flow.source.id]
+        initial = constant_number(stock.initial)
+        if initial is not None and initial > 0 and _negative_outflow(flow.expression, stock.id):
+            issues.append(
+                _issue(
+                    "INVALID_NEGATIVE_OUTFLOW",
+                    f"variables.{flow.id}.expression",
+                    "one-directional outflow cannot be negative; "
+                    "remove sign inversion or correct flow endpoints",
+                )
+            )
+    return issues
 
 
 def _sirs_issues(document: ModelDocument) -> list[ValidationIssue]:
@@ -207,6 +273,7 @@ def semantic_issues(document: ModelDocument) -> list[ValidationIssue]:
                     "supply-delay model needs at least one delay1/delay3 flow",
                 )
             )
+    issues.extend(_outflow_sign_issues(document))
     return issues
 
 

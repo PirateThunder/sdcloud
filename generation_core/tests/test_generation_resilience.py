@@ -44,6 +44,46 @@ def request() -> GenerationRequest:
     return GenerationRequest(description="Модель хищник-жертва: кролики и лисы")
 
 
+async def test_ode_guidance_is_used_only_without_pattern():
+    class PromptCaptureLLM(EarlyRepairLLM):
+        def __init__(self):
+            super().__init__()
+            self.prompts = {}
+
+        async def chat_json(self, prompt, *, stage, system=None, temperature=0.3, response_schema=None):
+            self.prompts[stage] = prompt
+            return await super().chat_json(
+                prompt,
+                stage=stage,
+                system=system,
+                temperature=temperature,
+                response_schema=response_schema,
+            )
+
+    llm = PromptCaptureLLM()
+    await generate_model(
+        GenerationRequest(description="Custom second-order dynamic system"),
+        llm,
+        max_repairs=0,
+    )
+    assert "Для математических ODE" in llm.prompts["variables"]
+    assert "nonnegative flow policy" in llm.prompts["variables"]
+    llm = PromptCaptureLLM()
+    await generate_model(request(), llm, max_repairs=0)
+    assert "stock.derivative" not in llm.prompts["variables"]
+
+
+async def test_brief_schema_excludes_unused_component_definitions():
+    from pipeline.llm import strict_json_schema
+
+    llm = EarlyRepairLLM()
+    await generate_model(request(), llm, max_repairs=0)
+    schema = strict_json_schema(llm.schemas["brief"])
+    assert "$defs" not in schema
+    assert set(schema["required"]) == set(schema["properties"])
+    assert not {"components", "time", "assumptions"} & set(schema["properties"])
+
+
 async def test_malformed_json_is_repaired_on_the_same_stage():
     llm = EarlyRepairLLM(
         failures={
@@ -54,6 +94,30 @@ async def test_malformed_json_is_repaired_on_the_same_stage():
     assert document.validation.status == "passed"
     assert document.repair_attempts == 1
     assert llm.calls == ["brief", "brief_repair_1", "variables", "equations"]
+
+
+async def test_brief_repair_requires_a_complete_object_not_an_array():
+    class PromptLLM(EarlyRepairLLM):
+        def __init__(self):
+            super().__init__(
+                failures={"brief": LLMResponseError("array instead of object", response_text="[]")}
+            )
+            self.prompts = {}
+
+        async def chat_json(self, prompt, *, stage, system=None, temperature=0.3, response_schema=None):
+            self.prompts[stage] = prompt
+            return await super().chat_json(
+                prompt,
+                stage=stage,
+                system=system,
+                temperature=temperature,
+                response_schema=response_schema,
+            )
+
+    llm = PromptLLM()
+    await generate_model(request(), llm, max_repairs=1)
+    assert "НЕ массив" in llm.prompts["brief_repair_1"]
+    assert '"stocks"' in llm.prompts["brief_repair_1"]
 
 
 async def test_stage_artifacts_include_successful_response_before_parsing(tmp_path):
@@ -361,6 +425,60 @@ async def test_normalized_pattern_uses_validated_equations_without_llm_stage():
     assert document.assumptions[-1].path == "equations"
 
 
+async def test_canonical_pattern_edit_uses_llm_and_preserves_other_variables():
+    from pipeline.pattern_library import get_pattern
+    from pipeline.schemas import ModelBrief
+
+    pattern = get_pattern("van_der_pol_oscillator")
+    brief = ModelBrief(
+        goal="Tune normalized damping",
+        boundaries=["Normalized circuit dynamics"],
+        time_horizon="60 time units",
+        time_unit="time",
+        aggregation="medium",
+        stocks=["position", "velocity"],
+        flows=["d_position", "d_velocity"],
+        exogenous_inputs=["mu"],
+        expected_feedback_loops=["nonlinear damping"],
+    )
+    variables = []
+    expressions = []
+    for item in pattern.document.variables:
+        payload = item.model_dump(mode="json")
+        if item.id == "mu":
+            payload["initial"] = 5
+            payload["expression"] = 5
+        if item.kind != "stock":
+            expressions.append({"id": item.id, "expression": payload["expression"]})
+        variables.append(payload)
+    llm = EarlyRepairLLM(
+        replacements={
+            "brief": brief.model_dump(mode="json"),
+            "variables": {
+                "name": pattern.document.name,
+                "time": pattern.document.time.model_dump(mode="json"),
+                "variables": variables,
+                "tables": [],
+                "assumptions": [],
+            },
+            "equations": {"expressions": expressions},
+        }
+    )
+    document = await generate_model(
+        GenerationRequest(description="Set mu to 5", base_model=pattern.document),
+        llm,
+        max_repairs=0,
+    )
+    assert llm.calls == ["brief", "variables", "equations"]
+    assert document.pattern_id == pattern.id
+    mu = next(item for item in document.variables if item.id == "mu")
+    assert mu.expression.value == 5
+    for item in document.variables:
+        if item.id != "mu":
+            original = next(value for value in pattern.document.variables if value.id == item.id)
+            assert item.model_dump() == original.model_dump()
+
+
 def test_bass_brief_rejects_unrequested_monetary_inputs():
     from pipeline.generation import _validate_brief_scope
     from pipeline.pattern_library import get_pattern
@@ -521,8 +639,9 @@ async def test_smoke_failure_uses_repair_budget(monkeypatch):
     assert llm.calls[-1] == "repair_1"
 
 
-def test_merge_normalizes_stock_topology_and_dynamic_constant():
-    from pipeline.generation import _merge
+def test_merge_preserves_derivative_for_consistency_validation():
+    from pipeline.generation import _merge, _validated
+    from pipeline.schemas import ModelDocument, TimeSettings
 
     variables = _merge(
         [
@@ -546,13 +665,99 @@ def test_merge_normalizes_stock_topology_and_dynamic_constant():
             "recruitment": "if_then_else(time >= 60, 5, 0)",
             "demand": "time",
         },
+        time_unit="week",
     )
     stock = next(item for item in variables if item.id == "members")
     demand = next(item for item in variables if item.id == "demand")
     recruitment = next(item for item in variables if item.id == "recruitment")
-    assert stock.derivative is None
+    assert stock.derivative is not None
     assert demand.kind == "auxiliary"
     assert recruitment.expression.otherwise.op == "mul"
+    _, errors = _validated(
+        ModelDocument(
+            name="Mismatched derivative",
+            description="Derivative must agree with topology",
+            time=TimeSettings(unit="week"),
+            variables=variables,
+        )
+    )
+    assert "DERIVATIVE_TOPOLOGY_MISMATCH" in {item.code for item in errors}
+
+
+def test_isolated_stock_derivative_becomes_equivalent_net_flow():
+    from pipeline.generation import _merge, _validated
+    from pipeline.schemas import ModelDocument, TimeSettings
+
+    variables = _merge(
+        [
+            {
+                "id": "charge",
+                "kind": "stock",
+                "units": {"coulomb": 1},
+                "initial": 5,
+                "derivative": "-charge / rc_time",
+            },
+            {"id": "rc_time", "kind": "constant", "units": {"second": 1}},
+        ],
+        {"rc_time": 5},
+        time_unit="second",
+    )
+    document, errors = _validated(
+        ModelDocument(
+            name="Derivative net flow",
+            description="Equivalent derivative representation",
+            time=TimeSettings(unit="second", final_time=1, time_step=0.1, saveper=0.1),
+            variables=variables,
+        )
+    )
+    assert not errors
+    stock = next(item for item in document.variables if item.id == "charge")
+    flow = next(item for item in document.variables if item.id == "charge_net_rate")
+    assert stock.derivative.name == flow.id
+    assert flow.units == {"coulomb": 1, "second": -1}
+    assert flow.topology_status == "inferred"
+    assert flow.source.kind == "cloud"
+    assert flow.target.id == "charge"
+
+
+def test_cloud_endpoint_with_declared_stock_is_reused():
+    _, variables = _variable_response(
+        {
+            "variables": [
+                {"id": "lower", "kind": "stock", "units": {"litre": 1}, "initial": 0},
+                {"id": "environment", "kind": "stock", "units": {"litre": 1}, "initial": 0},
+                {
+                    "id": "outflow",
+                    "kind": "flow",
+                    "units": {"litre": 1, "minute": -1},
+                    "source": {"kind": "stock", "id": "lower"},
+                    "target": {"kind": "cloud", "id": "environment"},
+                },
+            ]
+        }
+    )
+    flow = next(item for item in variables if item["id"] == "outflow")
+    assert flow["target"] == {"kind": "stock", "id": "environment"}
+
+
+def test_cloud_id_collision_with_nonstock_is_namespaced():
+    _, variables = _variable_response(
+        {
+            "variables": [
+                {"id": "lower", "kind": "stock", "units": {"litre": 1}, "initial": 0},
+                {"id": "environment", "kind": "constant", "units": {"litre": 1}, "initial": 0},
+                {
+                    "id": "outflow",
+                    "kind": "flow",
+                    "units": {"litre": 1, "minute": -1},
+                    "source": {"kind": "stock", "id": "lower"},
+                    "target": {"kind": "cloud", "id": "environment"},
+                },
+            ]
+        }
+    )
+    flow = next(item for item in variables if item["id"] == "outflow")
+    assert flow["target"] == {"kind": "cloud", "id": "outflow_environment"}
 
 
 def test_explicit_dimensionless_units_are_normalized():

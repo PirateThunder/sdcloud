@@ -273,11 +273,17 @@ def _extract_vensim_tables(body: str) -> tuple[str, list[LookupTable], dict[str,
 
 def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocument:
     body = source.split("\\\\\\---/// Sketch information", 1)[0].replace("{UTF-8}", "")
+    body = re.sub(
+        r"(?ms)^[ \t]*\*{3,}[ \t]*\r?\n[ \t]*\.Control[ \t]*\r?\n"
+        r"[ \t]*\*{3,}~.*?^[ \t]*\|[ \t]*$",
+        "",
+        body,
+    )
     body, tables, tables_names = _extract_vensim_tables(body)
     record = re.compile(
-        r"(?ms)^(?P<lhs>.+?)\s*=\s*(?P<rhs>.*?)(?=\n\s*~|\Z)"
-        r"(?:\n\s*~\s*(?P<units>[^\n]*))?"
-        r"(?:\n\s*~\s*(?P<comment>.*?)\|)?"
+        r"(?ms)^(?P<lhs>.+?)\s*=\s*(?P<rhs>.*?)(?=\n[ \t]*~|\Z)"
+        r"(?:\n[ \t]*~[ \t]*(?P<units>[^\n]*))?"
+        r"(?:\n[ \t]*~[ \t]*(?P<comment>.*?)\|)?"
     )
     raw = []
     controls = {}

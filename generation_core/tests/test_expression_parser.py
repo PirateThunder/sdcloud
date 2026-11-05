@@ -132,3 +132,22 @@ def test_ast_call_shorthands_are_normalized():
 
 def test_json_string_ast_is_normalized_without_eval():
     assert normalize_expression('{"op":"lit","value":0.1}') == {"op": "lit", "value": 0.1}
+
+
+def test_divide_alias_is_normalized_in_dsl_and_ast():
+    expected = {
+        "op": "div",
+        "args": [{"op": "ref", "name": "population"}, {"op": "lit", "value": 2.0}],
+    }
+    assert normalize_expression("DIVIDE(population, 2)") == expected
+    assert normalize_expression({"op": "divide", "args": expected["args"]}) == expected
+    assert normalize_expression({"op": "call", "name": "divide", "args": expected["args"]}) == expected
+
+
+def test_infix_if_then_else_is_normalized():
+    expression = parse_expression("if time < 2 then 10 else 0")
+    assert isinstance(expression, IfExpression)
+    assert expression.condition.op == "lt"
+    assert expression.condition.args[0].op == "time"
+    assert expression.then.value == 10
+    assert expression.otherwise.value == 0

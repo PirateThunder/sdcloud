@@ -6,12 +6,14 @@ AI-ассистент для системной динамики: превращ
 calibration и экспорт в открытые форматы.
 
 Монорепозиторий состоит из независимого движка генерации, продуктового backend и
-браузерного интерфейса. Текущая версия — **0.2.2**, статус — локальная разработка,
+браузерного интерфейса. Текущая версия — **0.3.0**, статус — локальная разработка,
 не production release.
 
 ## Возможности
 
 - Генерация системно-динамических моделей из текстового описания через LLM.
+- Typed component builder для систем вне библиотеки archetypes: first-order переходы,
+  условные и scheduled flows, очереди, задержки и полиномиальные ODE с выводом units.
 - Stocks, flows, auxiliaries, constants, typed AST, проверка units и топологии.
 - Контекстный чат: вопросы о модели, уточнения и изменения текущей версии.
 - CLD/SFD, поиск петель обратной связи и просмотр уравнений в LaTeX.
@@ -188,8 +190,17 @@ SMTP, ограничить доступ к внутренним сервисам
 - Текущий local benchmark 26×3 (78 cases) достиг 98,7% по всем метрикам; held-out 16×3
   достиг 97,9% executable/semantic и 95,8% behavior на RTX 5090 с локальной 30B.
   Исходный OpenRouter 26×3 достиг 94,87%; confirmation v16 — 95,83%/93,75%,
-  validation v13 — 100%. Остаточные случаи: unsupported `divide` и допустимое
-  статическое равновесие в отдельных dynamic behavior checks.
+  validation v13 — 100%. Эти результаты относятся к известным archetypes.
+- Independent corpus из 14 новых предметных областей не совпадает с archetype metrics.
+  Полный v6 (`out/benchmark-openrouter-independent-14x3-v6.json`) достиг 90,48%
+  executable/semantic/behavior при repair rate 26,19%; targets 90/85/85% пройдены
+  на этом corpus. FitzHugh остался 0/3, transport 2/3, поэтому универсальная
+  стабильность не заявляется. Отдельный confirmation 10×3 (`out/benchmark-openrouter-independent-confirmation-10x3-v3.json`)
+  достиг 96,67% executable/semantic и 90% behavior при repair rate 16,67%. Targets пройдены,
+  но nonlinear recovery имеет 2/3 executable и 1/3 behavior, а two-stage heating — 2/3 behavior.
+- Внешний SDXorg corpus зафиксирован отдельно от LLM metrics: 154 Vensim-файла,
+  148 с эталоном, 16 импортированы и симулированы, 15 совпали численно. Большинство
+  остальных использует неподдерживаемые importer-конструкции; это не solver error-rate.
 - Редактор CLD/SFD и автоматическая симуляция после каждой генерации не входят
   в текущую версию.
 

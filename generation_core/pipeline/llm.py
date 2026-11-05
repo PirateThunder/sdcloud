@@ -8,7 +8,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from .exceptions import LLMError, LLMResponseError
+from .exceptions import LLMError, LLMResponseError, ModelValidationError
+from .expression_parser import normalize_expression
 
 
 class LLMClient(Protocol):
@@ -25,20 +26,57 @@ class LLMClient(Protocol):
     async def close(self) -> None: ...
 
 
+def _limited_integer(value: str) -> int:
+    if len(value.lstrip("-")) > 100:
+        raise ValueError("integer literal exceeds 100 digits")
+    return int(value)
+
+
+def _json_loads(text: str) -> Any:
+    return json.loads(text, parse_int=_limited_integer)
+
+
+def _normalize_unquoted_arithmetic(text: str) -> str:
+    pattern = re.compile(r"(:[ \t]*)([-+*/^%().\d eE\t]+?)(?=[ \t]*[,}\]\n])")
+
+    def replace(match: re.Match[str]) -> str:
+        candidate = match.group(2).strip()
+        if len(candidate) > 200 or not any(operator in candidate for operator in "+-*/%^"):
+            return match.group(0)
+        try:
+            expression = normalize_expression(candidate)
+            value = expression.get("value")
+            if expression.get("op") != "lit" or isinstance(value, bool):
+                return match.group(0)
+            if not isinstance(value, int | float):
+                return match.group(0)
+            return f"{match.group(1)}{json.dumps(value, allow_nan=False)}"
+        except (ModelValidationError, ArithmeticError, TypeError, ValueError):
+            return match.group(0)
+
+    return pattern.sub(replace, text)
+
+
 def parse_json_response(text: str) -> Any:
     stripped = text.strip()
     block = re.search(r"```(?:json)?\s*\n?(.*?)```", stripped, re.DOTALL)
     if block:
         stripped = block.group(1).strip()
     try:
-        return json.loads(stripped)
-    except json.JSONDecodeError as original:
+        return _json_loads(stripped)
+    except ValueError as original:
+        repaired = _normalize_unquoted_arithmetic(stripped)
+        if repaired != stripped:
+            try:
+                return _json_loads(repaired)
+            except ValueError:
+                pass
         for pattern in (r"(\[.*\])", r"(\{.*\})"):
             match = re.search(pattern, stripped, re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group(1))
-                except json.JSONDecodeError:
+                    return _json_loads(match.group(1))
+                except ValueError:
                     continue
         raise LLMResponseError(
             f"failed to parse LLM JSON: {original}", response_text=stripped[:6000]

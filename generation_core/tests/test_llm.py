@@ -128,6 +128,11 @@ def test_malformed_json_contains_repair_context():
     assert error.value.response_text == "{broken"
 
 
+def test_pathological_integer_literal_is_a_bounded_response_error():
+    with pytest.raises(LLMResponseError, match="100 digits"):
+        parse_json_response('{"value":' + "9" * 5000 + "}")
+
+
 async def test_transport_failure_is_retried_without_using_repair_budget():
     requests = []
 
@@ -214,3 +219,22 @@ async def test_truncated_json_reports_token_limit_and_preserves_excerpt():
     finally:
         await llm.close()
     assert error.value.response_text == '{"variables": ['
+
+
+def test_unquoted_numeric_arithmetic_is_safely_normalized():
+    result = parse_json_response(
+        '{"coefficient": 0.08 * 0.8, "scale": 1/3, "expression": "v^3/3"}'
+    )
+    assert result["coefficient"] == pytest.approx(0.064)
+    assert result["scale"] == pytest.approx(1 / 3)
+    assert result["expression"] == "v^3/3"
+
+
+def test_arithmetic_normalization_rejects_code_and_invalid_numbers():
+    for source in (
+        '{"value": 1/3 + globals()}',
+        '{"value": 1/0}',
+        '{"value": 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999}',
+    ):
+        with pytest.raises(LLMResponseError):
+            parse_json_response(source)

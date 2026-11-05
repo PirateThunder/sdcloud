@@ -11,14 +11,18 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .codegen import export_vensim, generate_python_code
+from .components import build_components, normalize_component_payload
 from .exceptions import LLMResponseError, ModelValidationError
 from .expression_parser import normalize_expression
 from .formats import export_xmile
 from .io import write_json_atomic, write_stage
-from .ir import dependencies, walk
+from .ir import dependencies, ref, walk
 from .llm import LLMClient
 from .pattern_library import pattern_prompt, select_pattern
 from .prompts import (
+    BRIEF_REPAIR_PROMPT,
+    COMPONENT_BRIEF_GUIDANCE,
+    COMPONENT_PLAN_PROMPT,
     EQUATION_GENERATION_PROMPT,
     MODEL_BRIEF_PROMPT,
     REPAIR_PROMPT,
@@ -27,7 +31,10 @@ from .prompts import (
 )
 from .schemas import (
     Assumption,
+    ComponentPlan,
     Expression,
+    FlowEndpoint,
+    FlowVariable,
     GenerationRequest,
     LookupTable,
     ModelBrief,
@@ -39,6 +46,7 @@ from .schemas import (
 )
 from .semantics import with_semantic_validation
 from .simulation import simulate_model
+from .units import combine
 from .validation import finalize_model
 
 
@@ -228,7 +236,7 @@ async def _call_stage[T](
     prompt: str,
     system: str,
     temperature: float,
-    response_schema: dict,
+    response_schema: dict | None,
     parser: Callable[[Any], T],
     budget: _RepairBudget,
     workdir: Path | None,
@@ -265,7 +273,8 @@ async def _call_stage[T](
                 {"error": str(exc), "response": previous_response},
             )
             current_stage = repair_stage
-            current_prompt = STAGE_REPAIR_PROMPT.format(
+            template = BRIEF_REPAIR_PROMPT if stage == "brief" else STAGE_REPAIR_PROMPT
+            current_prompt = template.format(
                 stage=stage,
                 error=str(exc)[:6000],
                 original_prompt=_json_excerpt(prompt, 20_000),
@@ -311,6 +320,20 @@ def _description(request: GenerationRequest) -> str:
             "not as additional simultaneous changes."
         )
     return f"Conversation context:\n{history}\n\nCurrent request:\n{request.description}"
+
+
+def _ode_guidance(pattern) -> str:
+    if pattern is not None:
+        return ""
+    return """\
+- Для математических ODE задавай каждую state variable как stock с initial и derivative.
+  Не создавай отдельный flow для каждой производной: builder создаст эквивалентный net flow.
+  Flow используй только для явных материальных переходов с известными endpoints.
+- Если stock физически неотрицателен (people, packets, mass), задай bounds.min=0 и
+  on_violation="error", а также nonnegative flow policy через min/max. Не скрывай отрицательные
+  значения через clamp. Для нулевого начального delay используй delay3i/smooth3i с явным
+  initial argument, а не несогласованные ручные pipeline stocks.
+"""
 
 
 def _variables(response: Any) -> tuple[dict, list[dict]]:
@@ -589,6 +612,23 @@ def _variable_response(response: Any, *, default_time: TimeSettings | None = Non
         normalized.append(value)
     ids = {item.get("id") for item in normalized}
     stocks = {item.get("id") for item in normalized if item.get("kind") == "stock"}
+    for item in normalized:
+        if item.get("kind") != "flow":
+            continue
+        for field in ("source", "target"):
+            endpoint = item.get(field)
+            if not isinstance(endpoint, dict):
+                continue
+            if endpoint.get("kind") == "cloud" and endpoint.get("id") in stocks:
+                endpoint["kind"] = "stock"
+            elif endpoint.get("kind") == "cloud" and endpoint.get("id") in ids:
+                base = f"{item.get('id')}_{endpoint.get('id')}"[:110]
+                candidate = base
+                suffix = 2
+                while candidate in ids:
+                    candidate = f"{base}_{suffix}"
+                    suffix += 1
+                endpoint["id"] = candidate
     unknown_endpoints = [
         f"variables.{item.get('id')}.{field}={endpoint.get('id')}"
         for item in normalized
@@ -664,7 +704,9 @@ def _expressions(response: Any) -> dict[str, Any]:
     return raw
 
 
-def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
+def _merge(
+    raw: list[dict], expressions: dict[str, Any], *, time_unit: str = "year"
+) -> list[SDVariable]:
     expressions = {key: value for key, value in expressions.items() if key not in {"time", "pi", "e"}}
     ids = {item.get("id") for item in raw}
     stock_ids = {item.get("id") for item in raw if item.get("kind") == "stock"}
@@ -697,10 +739,12 @@ def _merge(raw: list[dict], expressions: dict[str, Any]) -> list[SDVariable]:
             merged.append(TypeAdapter(SDVariable).validate_python(value))
         except ValidationError as exc:
             raise ModelValidationError(f"invalid variable {value.get('id')}: {exc}") from exc
-    return _normalize_generated_variables(merged)
+    return _normalize_generated_variables(merged, time_unit)
 
 
-def _normalize_generated_variables(variables: list[SDVariable]) -> list[SDVariable]:
+def _normalize_generated_variables(
+    variables: list[SDVariable], time_unit: str = "year"
+) -> list[SDVariable]:
     by_id = {item.id: item for item in variables}
     connected_stocks = {
         endpoint.id
@@ -726,8 +770,28 @@ def _normalize_generated_variables(variables: list[SDVariable]) -> list[SDVariab
     }
     normalized = []
     for item in variables:
-        if item.kind == "stock" and item.id in connected_stocks and item.derivative is not None:
-            item = item.model_copy(update={"derivative": None})
+        if item.kind == "stock" and item.id not in connected_stocks and item.derivative is not None:
+            flow_id = f"{item.id}_net_rate"
+            suffix = 2
+            while flow_id in by_id:
+                flow_id = f"{item.id}_net_rate_{suffix}"
+                suffix += 1
+            source_id = f"{flow_id}_source"
+            while source_id in by_id:
+                source_id = f"{source_id}_external"
+            flow = FlowVariable(
+                id=flow_id,
+                kind="flow",
+                expression=item.derivative,
+                source=FlowEndpoint(kind="cloud", id=source_id),
+                target=FlowEndpoint(kind="stock", id=item.id),
+                units=combine(item.units, {time_unit: -1}) if item.units is not None else None,
+                topology_status="inferred",
+            )
+            item = item.model_copy(update={"derivative": ref(flow_id)})
+            by_id[flow_id] = flow
+            normalized.append(flow)
+            connected_stocks.add(item.id)
         if item.kind == "constant":
             dynamic = any(
                 node.op == "time" or (node.op == "call" and node.name in dynamic_calls)
@@ -798,7 +862,17 @@ def _repair(
             existing = previous.get(item.get("id"))
             if existing is not None and existing.kind != "stock":
                 item["expression"] = existing.expression.model_dump(mode="json")
-        variables = _merge(raw, _expressions({"variables": raw}))
+        time_settings = metadata.get("time") or document.time
+        time_unit = (
+            time_settings.unit
+            if isinstance(time_settings, TimeSettings)
+            else time_settings["unit"]
+        )
+        variables = _merge(
+            raw,
+            _expressions({"variables": raw}),
+            time_unit=time_unit,
+        )
         return ModelDocument(
             id=document.id,
             name=response.get("name") or document.name,
@@ -912,11 +986,17 @@ async def generate_model(
     pattern = select_pattern(description)
     pattern_text = pattern_prompt(pattern)
 
-    def parse_brief(response: Any) -> ModelBrief:
-        brief = ModelBrief.model_validate(response)
-        _validate_brief_scope(brief, pattern, description)
-        return brief
+    component_result: tuple[list[SDVariable], TimeSettings, list[Assumption]] | None = None
 
+    def parse_brief(response: Any) -> ModelBrief:
+        candidate = ModelBrief.model_validate(response)
+        _validate_brief_scope(candidate, pattern, description)
+        return candidate
+
+    brief_schema = ModelBrief.model_json_schema()
+    for field in ("components", "time", "assumptions"):
+        brief_schema["properties"].pop(field)
+    brief_schema.pop("$defs", None)
     _save_stage(workdir, "brief")
     brief = await _call_stage(
         llm,
@@ -924,91 +1004,156 @@ async def generate_model(
         prompt=MODEL_BRIEF_PROMPT.format(description=description, pattern=pattern_text),
         system="You are a system dynamics expert. Return only JSON.",
         temperature=0.1,
-        response_schema=ModelBrief.model_json_schema(),
+        response_schema=brief_schema,
         parser=parse_brief,
         budget=budget,
         workdir=workdir,
     )
-    brief_text = brief.model_dump_json(indent=2)
-    _save_stage(workdir, "brief", brief.model_dump(mode="json"))
+    if pattern is None and request.base_model is None:
+        def parse_components(response: Any) -> tuple[ComponentPlan, Any]:
+            plan = ComponentPlan.model_validate(normalize_component_payload(response))
+            if plan.components and plan.time is None:
+                raise ModelValidationError("component plan requires time settings")
+            built = (
+                build_components(plan.components, plan.time, plan.assumptions)
+                if plan.components
+                else None
+            )
+            return plan, built
 
-    _save_stage(workdir, "variables")
-
-    def parse_variables(response: Any) -> tuple[dict, list[dict]]:
-        result = _variable_response(
-            response,
-            default_time=pattern.document.time
-            if pattern
-            else request.base_model.time
-            if request.base_model
-            else None,
-        )
-        _validate_variable_scope(
-            result[1], pattern, description, (result[0].get("time") or {}).get("unit")
-        )
-        return result
-
-    metadata, raw = await _call_stage(
-        llm,
-        stage="variables",
-        prompt=VARIABLE_EXTRACTION_PROMPT.format(
-            description=description,
-            brief=brief_text,
-            pattern=pattern_text,
-        ),
-        system="You design valid system dynamics structures. Return only JSON.",
-        temperature=0.2,
-        response_schema=_VARIABLES_RESPONSE_SCHEMA,
-        parser=parse_variables,
-        budget=budget,
-        workdir=workdir,
-    )
-    _save_stage(workdir, "variables", raw)
-
-    _save_stage(workdir, "equations")
-
-    def parse_equations(response: Any) -> tuple[dict[str, Any], list[SDVariable]]:
-        expressions = _expressions(response)
-        return expressions, _merge(raw, expressions)
-
-    if request.base_model is None and _requires_normalized_pattern(pattern, description):
-        expressions = {
-            item.id: item.expression.model_dump(mode="json")
-            for item in pattern.document.variables
-            if item.kind != "stock"
-        }
-        variables = _merge(raw, expressions)
-        metadata["assumptions"] = [
-            *metadata.get("assumptions", []),
-            Assumption(
-                path="equations",
-                value=pattern.id,
-                source="archetype",
-                rationale=(
-                    "Normalized equations are taken from the validated pattern; "
-                    "stock initial values and constants are preserved."
-                ),
-                requires_confirmation=False,
-            ).model_dump(mode="json"),
-        ]
-    else:
-        expressions, variables = await _call_stage(
+        plan, component_result = await _call_stage(
             llm,
-            stage="equations",
-            prompt=EQUATION_GENERATION_PROMPT.format(
+            stage="components",
+            prompt=COMPONENT_PLAN_PROMPT.format(
                 description=description,
-                brief=brief_text,
-                pattern=pattern_text,
-                variables=json.dumps(raw, ensure_ascii=False, indent=2),
+                brief=brief.model_dump_json(indent=2),
+                component_guidance=COMPONENT_BRIEF_GUIDANCE,
             ),
-            system="You generate typed system dynamics expressions. Return only JSON.",
-            temperature=0.2,
-            response_schema=_EQUATIONS_RESPONSE_SCHEMA,
-            parser=parse_equations,
+            system="You specify typed dynamic mechanisms. Return only JSON.",
+            temperature=0.1,
+            response_schema=None,
+            parser=parse_components,
             budget=budget,
             workdir=workdir,
         )
-    _save_stage(workdir, "equations", expressions)
+        brief = brief.model_copy(
+            update={
+                "components": plan.components,
+                "time": plan.time,
+                "assumptions": plan.assumptions,
+            }
+        )
+        _save_stage(workdir, "components", plan.model_dump(mode="json"))
+    brief_text = brief.model_dump_json(indent=2)
+    _save_stage(workdir, "brief", brief.model_dump(mode="json"))
+
+    if component_result is not None:
+        variables, component_time, component_assumptions = component_result
+        metadata = {
+            "name": brief.goal[:300],
+            "time": component_time.model_dump(mode="json"),
+            "assumptions": [item.model_dump(mode="json") for item in component_assumptions],
+        }
+        _save_stage(
+            workdir,
+            "variables",
+            [item.model_dump(mode="json") for item in variables],
+        )
+        _save_stage(
+            workdir,
+            "equations",
+            {
+                "builder": "typed_components",
+                "expressions": [
+                    {"id": item.id, "expression": item.expression.model_dump(mode="json")}
+                    for item in variables
+                    if item.kind != "stock"
+                ],
+            },
+        )
+    else:
+        _save_stage(workdir, "variables")
+
+        def parse_variables(response: Any) -> tuple[dict, list[dict]]:
+            result = _variable_response(
+                response,
+                default_time=pattern.document.time
+                if pattern
+                else request.base_model.time
+                if request.base_model
+                else None,
+            )
+            _validate_variable_scope(
+                result[1], pattern, description, (result[0].get("time") or {}).get("unit")
+            )
+            return result
+
+        metadata, raw = await _call_stage(
+            llm,
+            stage="variables",
+            prompt=VARIABLE_EXTRACTION_PROMPT.format(
+                description=description,
+                brief=brief_text,
+                pattern=pattern_text,
+                ode_guidance=_ode_guidance(pattern),
+            ),
+            system="You design valid system dynamics structures. Return only JSON.",
+            temperature=0.2,
+            response_schema=_VARIABLES_RESPONSE_SCHEMA,
+            parser=parse_variables,
+            budget=budget,
+            workdir=workdir,
+        )
+        _save_stage(workdir, "variables", raw)
+
+        _save_stage(workdir, "equations")
+
+        def parse_equations(response: Any) -> tuple[dict[str, Any], list[SDVariable]]:
+            expressions = _expressions(response)
+            return expressions, _merge(
+                raw, expressions, time_unit=(metadata.get("time") or {}).get("unit", "year")
+            )
+
+        if request.base_model is None and _requires_normalized_pattern(pattern, description):
+            expressions = {
+                item.id: item.expression.model_dump(mode="json")
+                for item in pattern.document.variables
+                if item.kind != "stock"
+            }
+            variables = _merge(
+                raw, expressions, time_unit=(metadata.get("time") or {}).get("unit", "year")
+            )
+            metadata["assumptions"] = [
+                *metadata.get("assumptions", []),
+                Assumption(
+                    path="equations",
+                    value=pattern.id,
+                    source="archetype",
+                    rationale=(
+                        "Normalized equations are taken from the validated pattern; "
+                        "stock initial values and constants are preserved."
+                    ),
+                    requires_confirmation=False,
+                ).model_dump(mode="json"),
+            ]
+        else:
+            expressions, variables = await _call_stage(
+                llm,
+                stage="equations",
+                prompt=EQUATION_GENERATION_PROMPT.format(
+                    description=description,
+                    brief=brief_text,
+                    pattern=pattern_text,
+                    variables=json.dumps(raw, ensure_ascii=False, indent=2),
+                ),
+                system="You generate typed system dynamics expressions. Return only JSON.",
+                temperature=0.2,
+                response_schema=_EQUATIONS_RESPONSE_SCHEMA,
+                parser=parse_equations,
+                budget=budget,
+                workdir=workdir,
+            )
+        _save_stage(workdir, "equations", expressions)
 
     if request.assumption_policy == "require_explicit" and any(
         item.get("requires_confirmation") for item in metadata.get("assumptions", [])

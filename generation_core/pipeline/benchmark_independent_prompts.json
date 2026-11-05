@@ -1,0 +1,86 @@
+[
+  {
+    "id": "independent_rc_discharge",
+    "description": "A capacitor in an RC circuit starts with charge=5 coulomb. It discharges through a resistor with RC time constant=5 second. Represent capacitor charge and its discharge current, with no charging input. Use second as the time unit and a 50 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "analytic_exponential", "variable": "charge", "aliases": ["capacitor_charge", "charge_on_capacitor"], "initial": 5, "rate": -0.2, "time": 50, "tolerance": 0.02}
+  },
+  {
+    "id": "independent_radioactive_chain",
+    "description": "An isotope sample contains parent=100 atom and daughter=0 atom. The parent transforms into the daughter with coefficient=0.2 day^-1, and the daughter is removed with coefficient=0.05 day^-1. Use a 60 day horizon and keep atom and day units consistent.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "daughter", "after": 5}
+  },
+  {
+    "id": "independent_tank_cascade",
+    "description": "Two tanks are connected in series. upper contains 100 litre and lower contains 0 litre. upper drains into lower with time constant=2 minute; lower drains to the environment with time constant=5 minute. There is no refill. Use a 40 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "lower", "aliases": ["lower_tank", "lower_tank_volume", "lower_volume"], "after": 2}
+  },
+  {
+    "id": "independent_drug_infusion",
+    "description": "A patient receives a drug by infusion at 10 mg/minute for the first 2 minute, then infusion stops. Elimination is first order with coefficient=0.1 minute^-1 and drug_mass starts at 0 mg. Use a 20 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "drug_mass", "at": 2, "after": 20, "relation": "decrease"}
+  },
+  {
+    "id": "independent_damped_spring",
+    "description": "A spring-mass system has position=1 m and velocity=0 m/second. Its acceleration is -4*position - 0.4*velocity, with matching units. Use a 20 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "position", "minimum": 2}
+  },
+  {
+    "id": "independent_allee",
+    "description": "A small animal group follows an Allee effect: d(animals)/dt = 0.2*animals*(animals/10 - 1)*(1 - animals/100) - 0.05*animals. Start with animals=5 and use a 100 year horizon. Keep animal and year units consistent.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "monotonic", "variable": "animals", "direction": "decreasing"}
+  },
+  {
+    "id": "independent_appointment_queue",
+    "description": "A clinic starts with waiting_people=40. It serves through service_flow = min(waiting_people / service_time, max_service), where service_time=0.125 minute and max_service=8 person/minute. New arrivals add 2 person/minute. waiting_people must not become negative; use a nonnegative service policy. Use a 30 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "waiting_people", "value": 0.25, "tolerance": 0.005, "nonnegative": true}
+  },
+  {
+    "id": "independent_chemical_chain",
+    "description": "In a reactor, chemical_a=50 mole converts to chemical_b with coefficient=0.4 second^-1. chemical_b then converts to output_c with coefficient=0.1 second^-1. chemical_b starts at 0 mole and no material is added. Use a 60 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "chemical_b", "after": 2}
+  },
+  {
+    "id": "independent_router_burst",
+    "description": "A router starts with packets=0. Incoming traffic is 100 packet/second for the first 5 second and then stops. Processing uses service_time=0.5 second and max_throughput=40 packet/second. Use a 20 second horizon and keep packet and second units consistent.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "packets", "aliases": ["packets_in_buffer"], "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "independent_battery_load",
+    "description": "A battery starts with charge_fraction=0.9. It discharges at 0.01/second until time=10 second, then the load increases to 0.02/second. Keep charge_fraction dimensionless and use a 30 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "charge_fraction", "at": 10, "after": 30, "relation": "below", "value": 0.6}
+  },
+  {
+    "id": "independent_lactate",
+    "description": "After intense exercise, lactate_level=8 mmol/litre. Synthesis has stopped, and clearance uses coefficient=0.15 minute^-1. Use a 30 minute horizon and a first-order elimination flow.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "analytic_exponential", "variable": "lactate_level", "initial": 8, "rate": -0.15, "time": 30, "tolerance": 0.02}
+  },
+  {
+    "id": "independent_rossler",
+    "description": "A Rössler system has x=1, y=1, z=0. Its rates are -y-z, x+0.2y, and 0.2+z*(x-5.7). Use units `state` for x/y/z and `time` as the model time unit, with named scale constants for dimensional consistency and a 100 time unit horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "x", "minimum": 2}
+  },
+  {
+    "id": "independent_fitz_hugh",
+    "description": "A FitzHugh-Nagumo neuron starts with v=1 and w=0. Use dv/dt = v - v^3/3 - w + 0.5 and dw/dt = 0.08*(v + 0.7 - 0.8*w). Use units `state` for v/w and `time` as the model time unit, with named scale constants for dimensional consistency and a 100 time unit horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "v", "minimum": 2}
+  },
+  {
+    "id": "independent_transport_lag",
+    "description": "A workshop receives blanks through a third-order transport lag with transport_time=4 second. The incoming blank_rate is 10 item/second until time=5 second and 20 item/second afterwards. The workshop consumes blanks with time constant=2 second and starts with blanks=0 item. The transport lag starts empty with initial transport inflow=0 item/second. Use a 30 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "blanks", "at": 1, "before_max": 0.1, "after_min": 10}
+  }
+]

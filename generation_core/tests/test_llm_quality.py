@@ -68,6 +68,46 @@ def test_invalid_death_flow_is_a_semantic_error():
     assert "INVALID_DEATH_FLOW" in codes
 
 
+def test_negative_one_directional_outflow_is_rejected():
+    from pipeline.expression_parser import parse_expression
+
+    document = get_pattern("exponential_growth").document
+    variables = [item.model_dump() for item in document.variables]
+    for item in variables:
+        if item["id"] == "births":
+            item["id"] = "discharge_current"
+            item["source"] = {"kind": "stock", "id": "population"}
+            item["expression"] = parse_expression("-1 * population")
+    candidate = document.model_copy(update={"variables": variables})
+    assert "INVALID_NEGATIVE_OUTFLOW" in {item.code for item in semantic_issues(candidate)}
+    for item in variables:
+        if item["id"] == "discharge_current":
+            item["expression"] = parse_expression("population * birth_rate")
+    assert not semantic_issues(document.model_copy(update={"variables": variables}))
+
+
+def test_steady_state_oracle_rejects_negative_stock():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(time=[0, 1], variables={"waiting_people": [-0.5, 1]})
+    passed, metrics = _expected_behavior(
+        {
+            "expected_behavior": {
+                "kind": "steady_state",
+                "variable": "waiting_people",
+                "value": 1,
+                "tolerance": 0.1,
+                "nonnegative": True,
+            }
+        },
+        result,
+    )
+    assert not passed
+    assert metrics["nonnegative"] is False
+
+
 def test_bass_semantics_require_potential_adopters_and_word_of_mouth():
     from pipeline.expression_parser import parse_expression
 
@@ -279,3 +319,173 @@ async def test_benchmark_concurrency_preserves_result_order(tmp_path):
     assert llm.maximum_active == 2
     assert result["concurrency"] == 2
     assert [case["prompt_id"] for case in result["results"]] == ["first", "second"]
+
+
+def test_custom_behavior_oracles_check_numeric_properties():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior, _requires_dynamic
+
+    result = SimpleNamespace(
+        time=[0, 1, 2, 3, 4],
+        variables={
+            "decay": [5, 4, 3, 2, 1.8393972058572117],
+            "growth": [0, 1, 2, 3, 4],
+            "cascade": [0, 0, 5, 3, 1],
+            "delayed": [0, 0, 0, 8, 10],
+            "event": [0, 4, 8, 4, 2],
+            "sign": [1, -1, 1, -1, 1],
+            "stable": [3, 3, 3, 3, 3],
+            "left": [1, 1, 1, 1, 1],
+            "right": [2, 2, 2, 2, 2],
+        },
+    )
+    expectations = [
+        {"kind": "analytic_exponential", "variable": "decay", "initial": 5, "rate": -0.2, "time": 5, "tolerance": 0.001},
+        {"kind": "monotonic", "variable": "growth", "direction": "increasing"},
+        {"kind": "sign_changes", "variable": "sign", "minimum": 2},
+        {"kind": "cascade", "variable": "cascade", "after": 1},
+        {"kind": "delayed_response", "variable": "delayed", "at": 2, "before_max": 0, "after_min": 5},
+        {"kind": "event_change", "variable": "event", "at": 2, "after": 4, "relation": "decrease"},
+        {"kind": "steady_state", "variable": "stable", "value": 3, "tolerance": 1e-9},
+        {"kind": "range", "variable": "growth", "min": 0, "max": 5},
+        {"kind": "conservation", "variables": ["left", "right"], "tolerance": 1e-9},
+    ]
+    for expected in expectations:
+        passed, metrics = _expected_behavior({"expected_behavior": expected}, result)
+        assert passed, (expected, metrics)
+    assert not _requires_dynamic({"expected_behavior": expectations[6]})
+    assert _requires_dynamic({"expected_behavior": expectations[1]})
+
+
+def test_behavior_oracle_uses_explicit_variable_alias():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(time=[0, 1], variables={"capacitor_charge": [5, 4]})
+    passed, metrics = _expected_behavior(
+        {
+            "expected_behavior": {
+                "kind": "monotonic",
+                "variable": "charge",
+                "aliases": ["capacitor_charge"],
+                "direction": "decreasing",
+            }
+        },
+        result,
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "capacitor_charge"
+
+
+def test_behavior_oracle_can_resolve_the_only_stock():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(time=[0, 1], variables={"packet_backlog": [10, 0]})
+    passed, metrics = _expected_behavior(
+        {
+            "expected_behavior": {
+                "kind": "steady_state",
+                "variable": "packets",
+                "value": 0,
+                "tolerance": 0.01,
+            }
+        },
+        result,
+        {"packet_backlog"},
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "packet_backlog"
+
+
+def test_behavior_oracle_uses_only_unique_stock_name_matches():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(
+        time=[0, 1],
+        variables={"hot_reservoir": [80, 70], "warm_reservoir": [20, 30]},
+    )
+    stocks = {"hot_reservoir", "warm_reservoir"}
+    passed, metrics = _expected_behavior(
+        {"expected_behavior": {"kind": "monotonic", "variable": "warm"}},
+        result,
+        stocks,
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "warm_reservoir"
+    passed, _ = _expected_behavior(
+        {"expected_behavior": {"kind": "monotonic", "variable": "reservoir"}},
+        result,
+        stocks,
+    )
+    assert not passed
+
+
+def test_behavior_oracle_supports_simple_plural_stock_name():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(
+        time=[0, 1, 2], variables={"apprentices": [100, 80, 60], "masters": [0, 20, 30]}
+    )
+    passed, metrics = _expected_behavior(
+        {"expected_behavior": {"kind": "cascade", "variable": "master", "after": 1}},
+        result,
+        {"apprentices", "masters"},
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "masters"
+
+
+async def test_steady_state_benchmark_does_not_require_dynamic(tmp_path):
+    from pipeline.benchmark import run_benchmark
+
+    class ZeroLLM:
+        async def chat_json(self, prompt, *, stage, system=None, temperature=0.3, response_schema=None):
+            if stage == "brief":
+                return {
+                    "goal": "Remain at zero equilibrium",
+                    "boundaries": ["Zero state"],
+                    "time_horizon": "1 year",
+                    "time_unit": "year",
+                    "aggregation": "medium",
+                    "stocks": ["level"],
+                    "flows": ["change"],
+                    "exogenous_inputs": ["rate"],
+                    "expected_feedback_loops": [],
+                }
+            if stage == "components":
+                return {"components": [], "time": None, "assumptions": []}
+            if stage == "variables":
+                return {
+                    "name": "Zero equilibrium",
+                    "time": {"unit": "year", "initial_time": 0, "final_time": 1, "time_step": 0.25, "saveper": 0.25},
+                    "variables": [
+                        {"id": "level", "kind": "stock", "units": {"unit": 1}, "initial": 0},
+                        {"id": "change", "kind": "flow", "units": {"unit": 1, "year": -1}, "source": {"kind": "cloud", "id": "source"}, "target": {"kind": "stock", "id": "level"}},
+                        {"id": "rate", "kind": "constant", "units": {"year": -1}, "initial": 0},
+                    ],
+                    "tables": [],
+                    "assumptions": [],
+                }
+            if stage == "equations":
+                return {"expressions": [{"id": "change", "expression": "level * rate"}, {"id": "rate", "expression": 0}]}
+            raise AssertionError(stage)
+
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(json.dumps([{
+        "id": "zero_equilibrium",
+        "description": "A system at exact zero equilibrium",
+        "expected_pattern": None,
+        "expected_behavior": {"kind": "steady_state", "variable": "level", "value": 0, "tolerance": 1e-9},
+    }]))
+    result = await run_benchmark(ZeroLLM(), prompts_path=prompts, max_repairs=0)
+    assert result["dynamic_rate"] == 0
+    assert result["semantic_rate"] == 1
+    assert result["behavior_rate"] == 1

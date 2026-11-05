@@ -214,3 +214,124 @@ def test_units_diagnostics_include_operation_and_operand_units():
     assert "add operands" in issue.message
     assert "left={'person': 1}" in issue.message
     assert "right={'year': -1}" in issue.message
+
+
+def test_derived_si_units_support_analytic_rc_discharge():
+    from pipeline.expression_parser import parse_expression
+    from pipeline.schemas import (
+        ConstantVariable,
+        FlowEndpoint,
+        FlowVariable,
+        ModelDocument,
+        StockVariable,
+        TimeSettings,
+    )
+    from pipeline.units import canonical_units
+    from pipeline.validation import finalize_model
+
+    document = ModelDocument(
+        name="RC discharge",
+        description="Capacitor discharge through resistance and capacitance",
+        time=TimeSettings(unit="second", final_time=50, time_step=0.01, saveper=0.05),
+        variables=[
+            StockVariable(
+                id="charge",
+                kind="stock",
+                units={"coulomb": 1},
+                initial=parse_expression("5"),
+                derivative=parse_expression("-discharge_current"),
+            ),
+            FlowVariable(
+                id="discharge_current",
+                kind="flow",
+                units={"ampere": 1},
+                expression=parse_expression("charge / (resistance * capacitance)"),
+                source=FlowEndpoint(kind="stock", id="charge"),
+                target=FlowEndpoint(kind="cloud", id="ground"),
+            ),
+            ConstantVariable(
+                id="resistance",
+                kind="constant",
+                units={"ohm": 1},
+                expression=parse_expression("10"),
+            ),
+            ConstantVariable(
+                id="capacitance",
+                kind="constant",
+                units={"farad": 1},
+                expression=parse_expression("0.5"),
+            ),
+        ],
+    )
+    document = finalize_model(document)
+    assert not [issue for issue in document.validation.issues if issue.severity == "error"]
+    current = next(item for item in document.variables if item.id == "discharge_current")
+    assert current.units == {"coulomb": 1, "second": -1}
+    assert current.units_raw == "ampere"
+    assert canonical_units({"ohm": 1, "farad": 1}) == {"second": 1}
+    result = simulate_model(
+        document,
+        SimulationParameters(
+            engine="scipy",
+            integration_method="dop853",
+            final_time=50,
+            time_step=0.01,
+            saveper=0.05,
+            rtol=1e-10,
+            atol=1e-12,
+        ),
+    )
+    assert result.variables["charge"][-1] == pytest.approx(5 * math.exp(-10), abs=1e-6)
+
+
+def test_compound_unit_names_are_normalized_to_base_dimensions():
+    from pipeline.units import canonical_units
+
+    assert canonical_units({"meter_per_second": 1}) == {"meter": 1, "second": -1}
+    assert canonical_units({"per_second_squared": 1}) == {"second": -2}
+    assert canonical_units({"meter_per_second_squared_per_meter": 1}) == {"second": -2}
+    assert canonical_units({"meter_squared_per_second": 1}) == {"meter": 2, "second": -1}
+    assert canonical_units({"seconds": 1, "dimensionless": 3}) == {"second": 1}
+
+
+def test_vensim_blank_units_and_comments_do_not_create_control_variables():
+    source = """{UTF-8}
+InflowA=
+    1
+    ~\t
+    ~\t\t|
+
+StockA= INTEG (
+    InflowA,
+    10)
+    ~\t
+    ~\t\t|
+
+********************************************************
+    .Control
+********************************************************~
+    Simulation Control Parameters
+    |
+
+FINAL TIME = 10
+    ~\tMonth
+    ~\tFinal horizon|
+
+INITIAL TIME = 0
+    ~\tMonth
+    ~\tInitial time|
+
+SAVEPER = TIME STEP
+    ~\tMonth
+    ~\tOutput interval|
+
+TIME STEP = 1
+    ~\tMonth
+    ~\tIntegration step|
+"""
+    document = import_vensim(source)
+    assert [item.id for item in document.variables] == ["inflowa", "stocka"]
+    assert document.time.unit == "month"
+    assert document.time.final_time == 10
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["stocka"][-1] == 20

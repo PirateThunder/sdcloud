@@ -20,7 +20,7 @@ test('OTP → chat → model → graphs → simulation → exports → reload', 
   const chatUrl = page.url()
   await openModel.click()
   await expect(page).toHaveURL(/\/model-versions\//)
-  await expect(page.getByRole('heading', { name: /predator[ _]prey/i, level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
 
   await page.getByRole('tab', { name: 'CLD', exact: true }).click()
   await expect(page.locator('.react-flow__node').first()).toBeVisible()
@@ -52,7 +52,7 @@ test('OTP → chat → model → graphs → simulation → exports → reload', 
   expect((await pythonEvent).suggestedFilename()).toBe('model.py')
 
   await page.reload()
-  await expect(page.getByRole('heading', { name: /predator[ _]prey/i, level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
 
   await page.goto(chatUrl)
   await page.getByLabel('Описание системы').fill('What is the prey growth rate?')

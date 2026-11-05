@@ -1,0 +1,62 @@
+[
+  {
+    "id": "confirm_two_stage_heating",
+    "description": "Two thermal reservoirs exchange energy. hot starts at 80 heat_unit and warm at 20 heat_unit. Energy moves from hot to warm with coefficient=0.2 minute^-1, while warm loses energy to the environment with coefficient=0.1 minute^-1. There is no heater. Use a 50 minute horizon and keep heat_unit and minute units consistent.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "warm", "after": 2}
+  },
+  {
+    "id": "confirm_interval_infusion",
+    "description": "A nutrient tank starts with nutrient_mass=2 mg. A pump adds 4 mg/minute during the first 3 minute and then stops. Natural removal is first order with coefficient=0.2 minute^-1. Use a 25 minute horizon and mg and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "nutrient_mass", "at": 3, "after": 25, "relation": "decrease"}
+  },
+  {
+    "id": "confirm_finite_project_backlog",
+    "description": "A project starts with tasks=6. New work arrives at 12 task/day for the first 4 day and then stops. Completion follows min(tasks / service_time, max_service), with service_time=0.25 day and max_service=8 task/day. The task quantity must not become negative. Use a 20 day horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "tasks", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "confirm_shipment_delay",
+    "description": "A depot receives parts through a third-order material response with transport_time=2 second. The external part_rate is 0 item/second until time=3 second and 12 item/second afterwards. The response starts empty with initial output rate=0 item/second. Depot consumption has time constant=3 second and parts starts at 0 item. Use a 20 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "parts", "at": 1, "before_max": 0, "after_min": 10}
+  },
+  {
+    "id": "confirm_undamped_oscillator",
+    "description": "A lossless mechanical oscillator starts with displacement=2 meter and speed=0 meter/second. Its acceleration is -9*displacement with matching units and no damping. Use a 20 second horizon and meter and second units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "displacement", "minimum": 4}
+  },
+  {
+    "id": "confirm_logistic_harvest",
+    "description": "A biological reserve follows d(biomass)/dt = 0.3*biomass*(1 - biomass/200) - 0.1*biomass. Start with biomass=20 tonne and use an 80 year horizon. Keep tonne and year units consistent and represent 200 tonne as a named upper bound.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "monotonic", "variable": "biomass", "direction": "increasing"}
+  },
+  {
+    "id": "confirm_budget_step",
+    "description": "A project budget starts at 1000 dollar. Spending is 5 dollar/day until time=10 day, then increases to 20 dollar/day. Use a 30 day horizon and keep dollar and day units consistent. Model one outflow from the budget to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "budget", "at": 10, "after": 30, "relation": "below", "value": 600}
+  },
+  {
+    "id": "confirm_training_pipeline",
+    "description": "A certification cycle has two experience levels: apprentice=100 person and master=0 person. Apprentices become masters with coefficient=0.1 week^-1, and masters leave with coefficient=0.02 week^-1. No new apprentices arrive. Use an 80 week horizon and person and week units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "master", "after": 5}
+  },
+  {
+    "id": "confirm_nonlinear_recovery",
+    "description": "A two-state recovery system starts with v=1 and w=0. Use dv/dt = v - v^3/3 - w + 0.8 and dw/dt = 0.1*(v + 0.6 - 0.75*w). Both states have units `state`, model time has unit `time`, and the horizon is 100 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "v", "minimum": 2}
+  },
+  {
+    "id": "confirm_server_burst",
+    "description": "A server starts with packets=0. Traffic arrives at 60 packet/second for the first 2 second and then stops. Processing follows min(packets / service_time, max_throughput), with service_time=0.2 second and max_throughput=50 packet/second. The packet quantity must stay nonnegative. Use a 15 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "packets", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  }
+]

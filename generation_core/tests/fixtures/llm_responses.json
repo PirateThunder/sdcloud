@@ -10,6 +10,7 @@
     "exogenous_inputs": ["Коэффициенты рождаемости, хищничества, конверсии и смертности"],
     "expected_feedback_loops": ["Динамика хищник-жертва"]
   },
+  "components": {"components": [], "time": null, "assumptions": []},
   "variables": {
     "name": "Predator prey",
     "time": {"unit": "year", "initial_time": 0, "final_time": 100, "time_step": 0.25, "saveper": 0.25},

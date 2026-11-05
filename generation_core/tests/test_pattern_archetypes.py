@@ -149,3 +149,42 @@ def test_pattern_prompt_matches_structure_input_contract():
     assert isinstance(equations["adoption"], str)
     assert "potential_adopters" in equations["adoption"]
     assert '"op"' not in equations["adoption"]
+
+
+def test_independent_corpus_is_outside_pattern_library_and_has_oracles():
+    from pathlib import Path
+
+    from pipeline.benchmark import load_prompts
+
+    path = Path(__file__).parents[1] / "pipeline" / "benchmark_independent_prompts.json"
+    prompts = load_prompts(path)
+    assert len(prompts) >= 12
+    supported = {
+        "analytic_exponential",
+        "cascade",
+        "conservation",
+        "delayed_response",
+        "event_change",
+        "monotonic",
+        "range",
+        "sign_changes",
+        "steady_state",
+    }
+    for prompt in prompts:
+        assert prompt["expected_pattern"] is None
+        assert select_pattern(prompt["description"]) is None, prompt["id"]
+        assert prompt["expected_behavior"]["kind"] in supported
+
+
+def test_independent_confirmation_corpus_stays_outside_pattern_library():
+    from pathlib import Path
+
+    from pipeline.benchmark import load_prompts
+
+    path = Path(__file__).parents[1] / "pipeline" / "benchmark_independent_confirmation_prompts.json"
+    prompts = load_prompts(path)
+    assert len(prompts) == 10
+    for prompt in prompts:
+        assert prompt["expected_pattern"] is None
+        assert select_pattern(prompt["description"]) is None, prompt["id"]
+        assert prompt["expected_behavior"]["kind"]

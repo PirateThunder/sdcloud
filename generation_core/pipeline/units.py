@@ -28,7 +28,111 @@ UNIT_ALIASES = {
     "foxes": "fox",
     "task": "task",
     "tasks": "task",
+    "item": "item",
+    "items": "item",
+    "packet": "packet",
+    "packets": "packet",
+    "atom": "atom",
+    "atoms": "atom",
+    "mole": "mole",
+    "moles": "mole",
+    "second": "second",
+    "seconds": "second",
+    "s": "second",
+    "meter": "meter",
+    "meters": "meter",
+    "m": "meter",
+    "kilogram": "kilogram",
+    "kilograms": "kilogram",
+    "kg": "kilogram",
+    "litre": "litre",
+    "litres": "litre",
+    "liter": "litre",
+    "liters": "litre",
+    "lit": "litre",
+    "l": "litre",
+    "coulomb": "coulomb",
+    "coulombs": "coulomb",
+    "c": "coulomb",
+    "ampere": "ampere",
+    "amperes": "ampere",
+    "a": "ampere",
+    "farad": "farad",
+    "farads": "farad",
+    "f": "farad",
+    "ohm": "ohm",
+    "ohms": "ohm",
+    "volt": "volt",
+    "volts": "volt",
+    "v": "volt",
+    "henry": "henry",
+    "henries": "henry",
+    "joule": "joule",
+    "joules": "joule",
+    "j": "joule",
+    "watt": "watt",
+    "watts": "watt",
+    "newton": "newton",
+    "newtons": "newton",
+    "n": "newton",
+    "siemens": "siemens",
 }
+
+_DERIVED_UNITS = {
+    "ampere": {"coulomb": 1, "second": -1},
+    "farad": {"coulomb": 1, "volt": -1},
+    "ohm": {"second": 1, "farad": -1},
+    "volt": {"joule": 1, "coulomb": -1},
+    "henry": {"volt": 1, "second": 1, "ampere": -1},
+    "joule": {"newton": 1, "meter": 1},
+    "watt": {"joule": 1, "second": -1},
+    "newton": {"kilogram": 1, "meter": 1, "second": -2},
+    "siemens": {"ampere": 1, "volt": -1},
+}
+
+
+def _named_units(name: str, power: int) -> dict[str, int]:
+    normalized = re.sub(r"\s+", "_", name.strip().lower())
+    if normalized in {"", "1", "dimensionless"}:
+        return {}
+    if normalized.startswith("per_"):
+        return _named_units(normalized.removeprefix("per_"), -power)
+    if "_per_" in normalized:
+        numerator, *denominators = normalized.split("_per_")
+        result = _named_units(numerator, power) if numerator else {}
+        for denominator in denominators:
+            result = combine(result, _named_units(denominator, power), -1)
+        return result
+    if match := re.fullmatch(r"(.+)\^(-?\d+)", normalized):
+        return _named_units(match.group(1), power * int(match.group(2)))
+    exponent = 1
+    for suffix, value in (("_squared", 2), ("_cubed", 3)):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            exponent = value
+            break
+    return {UNIT_ALIASES.get(normalized, normalized): power * exponent}
+
+
+def canonical_units(units: dict[str, int]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for name, power in units.items():
+        result = combine(result, _named_units(name, power))
+    for _ in range(len(_DERIVED_UNITS) + 1):
+        changed = False
+        expanded = {}
+        for name, power in result.items():
+            definition = _DERIVED_UNITS.get(name)
+            if definition is None:
+                expanded[name] = expanded.get(name, 0) + power
+            else:
+                changed = True
+                for base, exponent in definition.items():
+                    expanded[base] = expanded.get(base, 0) + power * exponent
+        result = {name: power for name, power in expanded.items() if power}
+        if not changed:
+            return result
+    raise ValueError("cyclic derived unit definitions")
 
 
 def combine(left: dict[str, int], right: dict[str, int], sign: int = 1) -> dict[str, int]:

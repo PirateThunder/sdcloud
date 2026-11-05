@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.2.2**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.3.0**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -13,9 +13,17 @@ backend и не зависит от frontend.
 - Проверка ссылок, топологии потоков, units, начальных значений и auxiliary-циклов.
 - CLD/SFD, зависимости и петли обратной связи.
 - Безопасный DSL формул и AST-подобных строк без `eval`; внутри сохраняется canonical AST.
-- Многостадийная LLM-генерация: `ModelBrief → variables → equations → validation`,
-  strict JSON Schema на каждой стадии, ранние repair и общий bounded budget.
+- Многостадийная LLM-генерация: `ModelBrief → component plan → variables → equations → validation`,
+  ранние repair и общий bounded budget. Для новых систем вне pattern library typed
+  component plan заменяет свободные variables/equations детерминированным builder.
+  Component plan использует JSON-only decoding с обязательной Pydantic-валидацией;
+  остальные LLM-стадии сохраняют strict JSON Schema.
+- Шесть typed mechanisms: `first_order`, `conditional_inflow`, `queue`, `scheduled_flow`,
+  `delay` и `polynomial_ode`. Builder выводит units коэффициентов, объединяет повторные
+  stocks каскада только при совпадении initial/units и отклоняет неиспользуемые ODE parameters.
 - 16 validated pattern templates и smoke-симуляция готовой модели.
+- Канонические SI и составные units, безопасная нормализация unquoted numeric arithmetic
+  через DSL без `eval`, behavioral oracles и independent corpus из 14 предметных областей.
 - Для новых нормированных Lorenz/Van der Pol/Duffing без явных физических параметров
   equations берутся из validated pattern без повторного LLM-вывода; initial/constants
   сохраняются, archetype-provenance явно записывается. Остальные модели и редактирование
@@ -48,6 +56,7 @@ scenarios.py              Сравнение сценариев
 sensitivity.py            Анализ чувствительности
 calibrate.py              Подбор параметров по наблюдениям
 benchmark.py              Проверка качества LLM-генерации
+external_benchmark.py     Импорт и сравнение внешних моделей без LLM
 watchdog.py               Обработка зависших jobs
 ```
 
@@ -101,12 +110,33 @@ uv run python benchmark.py --runs 3 \
   --prompts-file pipeline/benchmark_holdout_prompts.json \
   --output out/benchmark-holdout.json \
   --artifacts-dir out/benchmark-holdout-artifacts
+uv run python benchmark.py --runs 3 \
+  --prompts-file pipeline/benchmark_independent_prompts.json \
+  --output out/benchmark-independent.json
+uv run python benchmark.py --runs 3 \
+  --prompts-file pipeline/benchmark_independent_confirmation_prompts.json \
+  --output out/benchmark-independent-confirmation.json
+uv run python external_benchmark.py \
+  --root out/sdxorg-test-models \
+  --output out/sdx-vensim.json
 ```
 
 `benchmark_holdout_prompts.json` содержит 16 описаний, по одному на archetype, и
-используется как validation-corpus для текущих итераций. После их завершения отдельный
-confirmation-набор находится в `benchmark_confirmation_prompts.json`; его live metrics
-ещё не измерены. Offline-тест проверяет выбор archetype на всех corpus.
+используется как validation-corpus для текущих итераций. `benchmark_confirmation_prompts.json`
+содержит отдельный confirmation-набор archetypes, чьи metrics измеряются независимо.
+`benchmark_independent_prompts.json` содержит 14 описаний вне pattern library, а
+`benchmark_independent_confirmation_prompts.json` — ещё 10 для проверки переноса;
+их метрики нельзя смешивать с archetype metrics или development-independent corpus.
+Offline-тест проверяет выбор archetype на всех corpus.
+
+`external_benchmark.py` не вызывает LLM. Он импортирует `.mdl`/`.xmile`, запускает исходные
+time settings и сравнивает stocks с `output.tab`/`output.csv` поточечно (`rtol=0.001`,
+`atol=1e-5` по умолчанию). Пустые необязательные reference-ячейки пропускаются; отсутствие
+числовых stock-точек не засчитывается. Отчёт разделяет no reference, import, simulation,
+reference и comparison stages. Для [SDXorg/test-models](https://github.com/SDXorg/test-models)
+зафиксирован commit `21aab02739dc5187bc9564e4d3de14e575905d2f`: 154 Vensim-файла,
+148 с эталоном, 16 импортированы и симулированы, 15 совпали численно. Это проверка
+interoperability, а не генерации и не готовый text-to-model training dataset.
 `--artifacts-dir` дополнительно сохраняет prompt, model, simulation, успешные ответы LLM
 и стадии каждого случая. При повторе прежние JSON-стадии того же случая очищаются.
 Отчёт содержит SHA-256 corpus и pipeline, max repairs, concurrency и настройки LLM.
@@ -247,5 +277,14 @@ Docker-контекста. Dockerfile собирает production-образ б�
   научную корректность произвольной системы.
 - Поддержка вычислительно сложных моделей зависит от выбранного solver и не отменяет
   необходимости проверять устойчивость и корректность результатов.
-- Benchmark 26×3 завершён: целевые 90/85/85% не достигнуты, а часть описаний имеет
-  переменчивый результат между запусками; production quality gate не пройден.
+- Original/held-out archetype quality gate был достигнут на OpenRouter и локальной 30B,
+  но это не production quality gate и не гарантия устойчивости вне pattern library.
+- Первый independent 14×3 показал 38,1% executable/semantic и 31,0% behavior; полный v6
+  после hardening достиг 90,48% по всем трём метрикам (38/42) при repair rate 26,19%.
+  Это достижение targets на development-independent corpus, а не универсальная гарантия:
+  FitzHugh остался 0/3, transport 2/3. Отдельный confirmation 10×3 достиг 96,67%
+  executable/semantic и 90% behavior при repair rate 16,67%. Nonlinear recovery имеет
+  2/3 executable и 1/3 behavior, two-stage heating — 2/3 behavior; ограничения сохраняются.
+- Vensim/XMILE importer поддерживает ограниченное подмножество форматов. В SDXorg baseline
+  16 из 148 reference-моделей импортированы и симулированы, 15 совпали численно; большая
+  часть остальных требует неподдерживаемых subscripts, macros и других конструкций.

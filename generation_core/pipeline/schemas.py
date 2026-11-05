@@ -8,6 +8,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .units import canonical_units, format_units
+
 
 class ContractModel(BaseModel):
     model_config = ConfigDict(
@@ -167,7 +169,10 @@ class VariableBase(ContractModel):
         if self.label is None:
             self.label = self.id
         if self.units is not None:
-            self.units = {name: power for name, power in self.units.items() if power}
+            original = dict(self.units)
+            self.units = canonical_units(self.units)
+            if self.units_raw is None and self.units != original:
+                self.units_raw = format_units(original)
         return self
 
     @property
@@ -225,6 +230,10 @@ class LookupTable(ContractModel):
         xs = [point[0] for point in self.points]
         if any(right <= left for left, right in zip(xs, xs[1:], strict=False)):
             raise ValueError("lookup x values must be strictly increasing")
+        if self.x_units is not None:
+            self.x_units = canonical_units(self.x_units)
+        if self.y_units is not None:
+            self.y_units = canonical_units(self.y_units)
         return self
 
 
@@ -325,16 +334,183 @@ class SFDData(ContractModel):
     validation: GraphValidation
 
 
-class ModelBrief(ContractModel):
-    goal: str = Field(min_length=1, max_length=2000)
-    boundaries: list[str] = Field(default_factory=list, max_length=30)
-    time_horizon: str = Field(min_length=1, max_length=200)
+class ComponentParameter(ContractModel):
+    id: str = Field(pattern=NAME_PATTERN, max_length=100)
+    value: float
+    role: Literal["rate", "threshold", "scale"] = "rate"
+    units: dict[str, int] | None = None
+
+    @model_validator(mode="after")
+    def normalize_units(self) -> ComponentParameter:
+        if self.units is not None:
+            self.units = canonical_units(self.units)
+        return self
+
+
+class OdeTerm(ContractModel):
+    coefficient: float | Annotated[str, Field(pattern=NAME_PATTERN, max_length=100)]
+    expression: str = Field(min_length=1, max_length=2000)
+    sign: Literal[1, -1] = 1
+    name: str | None = Field(default=None, max_length=200)
+
+
+class OdeStockSpec(ContractModel):
+    kind: Literal["polynomial_ode"]
+    stock: str = Field(pattern=NAME_PATTERN, max_length=100)
+    initial: float
+    units: dict[str, int]
     time_unit: str = Field(min_length=1, max_length=100)
-    aggregation: Literal["high", "medium", "low"] = "medium"
-    stocks: list[str] = Field(min_length=1, max_length=50)
-    flows: list[str] = Field(default_factory=list, max_length=100)
-    exogenous_inputs: list[str] = Field(default_factory=list, max_length=50)
-    expected_feedback_loops: list[str] = Field(default_factory=list, max_length=30)
+    terms: list[OdeTerm] = Field(min_length=1, max_length=100)
+    parameters: list[ComponentParameter] = Field(default_factory=list, max_length=50)
+
+
+class FirstOrderSpec(ContractModel):
+    kind: Literal["first_order"]
+    source: str = Field(pattern=NAME_PATTERN, max_length=100)
+    target: str = Field(min_length=1, max_length=106)
+    flow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    coefficient: float | None = Field(default=None, ge=0.0)
+    time_constant: float | None = Field(default=None, gt=0.0)
+    initial_source: float = 0.0
+    initial_target: float = 0.0
+    source_units: dict[str, int]
+    target_units: dict[str, int] | None = None
+    time_unit: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_reciprocal_duplicate(cls, value):
+        if isinstance(value, dict):
+            coefficient = value.get("coefficient")
+            time_constant = value.get("time_constant")
+            if (
+                isinstance(coefficient, int | float)
+                and isinstance(time_constant, int | float)
+                and coefficient > 0
+                and time_constant > 0
+                and abs(coefficient * time_constant - 1) <= 1e-9
+            ):
+                value = {**value, "time_constant": None}
+        return value
+
+    @model_validator(mode="after")
+    def check_mechanism(self) -> FirstOrderSpec:
+        if (self.coefficient is None) == (self.time_constant is None):
+            raise ValueError("exactly one of coefficient and time_constant is required")
+        if self.target.removeprefix("cloud:") == self.source:
+            raise ValueError("first_order source and target must be different")
+        if not self.target.startswith("cloud:"):
+            if self.target_units is None:
+                raise ValueError("target_units is required for a stock target")
+            if self.time_constant is not None and self.source_units != self.target_units:
+                raise ValueError("time_constant transfer requires matching source and target units")
+        return self
+
+
+class ConditionalInflowSpec(ContractModel):
+    kind: Literal["conditional_inflow"]
+    stock: str = Field(pattern=NAME_PATTERN, max_length=100)
+    inflow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    outflow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    rate: float = Field(ge=0.0)
+    start_time: float = Field(default=0.0, ge=0.0)
+    end_time: float = Field(gt=0.0)
+    elimination_rate: float = Field(ge=0.0)
+    initial: float = 0.0
+    units: dict[str, int]
+    time_unit: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def check_window(self) -> ConditionalInflowSpec:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be greater than start_time")
+        return self
+
+
+class QueueSpec(ContractModel):
+    kind: Literal["queue"]
+    stock: str = Field(pattern=NAME_PATTERN, max_length=100)
+    arrivals: str = Field(pattern=NAME_PATTERN, max_length=100)
+    service: str = Field(pattern=NAME_PATTERN, max_length=100)
+    service_time: float = Field(gt=0.0)
+    max_service: float = Field(gt=0.0)
+    arrival_rate: float = Field(ge=0.0)
+    initial: float = Field(ge=0.0)
+    units: dict[str, int]
+    time_unit: str = Field(min_length=1, max_length=100)
+    arrival_start_time: float = Field(default=0.0, ge=0.0)
+    arrival_end_time: float | None = Field(default=None, gt=0.0)
+
+    @model_validator(mode="after")
+    def check_arrival_window(self) -> QueueSpec:
+        if self.arrival_end_time is not None and self.arrival_end_time <= self.arrival_start_time:
+            raise ValueError("arrival_end_time must be greater than arrival_start_time")
+        return self
+
+
+class ScheduledFlowSpec(ContractModel):
+    kind: Literal["scheduled_flow"]
+    source: str = Field(min_length=1, max_length=106)
+    target: str = Field(min_length=1, max_length=106)
+    flow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    rate: float = Field(ge=0.0)
+    rate_after: float = Field(ge=0.0)
+    change_time: float = Field(ge=0.0)
+    initial_source: float = 0.0
+    initial_target: float = 0.0
+    source_units: dict[str, int] | None = None
+    target_units: dict[str, int] | None = None
+    time_unit: str = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def check_flow(self) -> ScheduledFlowSpec:
+        if self.source.startswith("cloud:") and self.target.startswith("cloud:"):
+            raise ValueError("scheduled_flow must connect at least one stock")
+        if self.source.removeprefix("cloud:") == self.target.removeprefix("cloud:"):
+            raise ValueError("scheduled_flow source and target must be different")
+        if not self.source.startswith("cloud:") and not self.target.startswith("cloud:"):
+            if self.source_units is None or self.target_units is None:
+                raise ValueError("scheduled_flow stocks require source_units and target_units")
+            if self.source_units != self.target_units:
+                raise ValueError("scheduled_flow source and target units must match")
+        elif self.source.startswith("cloud:") and self.target_units is None:
+            raise ValueError("target_units is required for a stock target")
+        elif self.target.startswith("cloud:") and self.source_units is None:
+            raise ValueError("source_units is required for a stock source")
+        return self
+
+
+class DelaySpec(ContractModel):
+    kind: Literal["delay"]
+    stock: str = Field(pattern=NAME_PATTERN, max_length=100)
+    inflow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    outflow: str = Field(pattern=NAME_PATTERN, max_length=100)
+    input_rate: float = Field(ge=0.0)
+    delay_time: float = Field(gt=0.0)
+    initial_stock: float = 0.0
+    initial_delayed_rate: float = Field(ge=0.0)
+    stock_units: dict[str, int]
+    time_unit: str = Field(min_length=1, max_length=100)
+    consumption_time: float | None = Field(default=None, gt=0.0)
+    input_rate_after: float | None = Field(default=None, ge=0.0)
+    rate_change_time: float | None = Field(default=None, gt=0.0)
+
+    @model_validator(mode="after")
+    def check_change(self) -> DelaySpec:
+        if (self.input_rate_after is None) != (self.rate_change_time is None):
+            raise ValueError("input_rate_after and rate_change_time must be supplied together")
+        return self
+
+
+ComponentSpec = Annotated[
+    FirstOrderSpec
+    | ConditionalInflowSpec
+    | QueueSpec
+    | ScheduledFlowSpec
+    | DelaySpec
+    | OdeStockSpec,
+    Field(discriminator="kind"),
+]
 
 
 class TimeSettings(ContractModel):
@@ -349,6 +525,27 @@ class TimeSettings(ContractModel):
         if self.final_time <= self.initial_time:
             raise ValueError("final_time must be greater than initial_time")
         return self
+
+
+class ComponentPlan(ContractModel):
+    components: list[ComponentSpec] = Field(default_factory=list, max_length=50)
+    time: TimeSettings | None = None
+    assumptions: list[Assumption] = Field(default_factory=list, max_length=500)
+
+
+class ModelBrief(ContractModel):
+    goal: str = Field(min_length=1, max_length=2000)
+    boundaries: list[str] = Field(default_factory=list, max_length=30)
+    time_horizon: str = Field(min_length=1, max_length=200)
+    time_unit: str = Field(min_length=1, max_length=100)
+    aggregation: Literal["high", "medium", "low"] = "medium"
+    stocks: list[str] = Field(min_length=1, max_length=50)
+    flows: list[str] = Field(default_factory=list, max_length=100)
+    exogenous_inputs: list[str] = Field(default_factory=list, max_length=50)
+    expected_feedback_loops: list[str] = Field(default_factory=list, max_length=30)
+    components: list[ComponentSpec] = Field(default_factory=list, max_length=50)
+    time: TimeSettings | None = None
+    assumptions: list[Assumption] = Field(default_factory=list, max_length=500)
 
 
 def _empty_cld() -> CLDData:
