@@ -6,7 +6,7 @@ AI-ассистент для системной динамики: превращ
 calibration и экспорт в открытые форматы.
 
 Монорепозиторий состоит из независимого движка генерации, продуктового backend и
-браузерного интерфейса. Текущая версия — **0.4.0**, статус — локальная разработка,
+браузерного интерфейса. Текущая версия — **0.5.0**, статус — локальная разработка,
 не production release.
 
 ## Возможности
@@ -14,6 +14,7 @@ calibration и экспорт в открытые форматы.
 - Генерация системно-динамических моделей из текстового описания через LLM.
 - Typed component builder для систем вне библиотеки archetypes: first-order переходы,
   условные и scheduled flows, очереди, задержки и полиномиальные ODE с выводом units.
+- Opt-in lexical RAG на проверенных ComponentPlan-примерах, без vector DB; по умолчанию выключен.
 - Stocks, flows, auxiliaries, constants, typed AST, проверка units и топологии.
 - Контекстный чат: вопросы о модели, уточнения и изменения текущей версии.
 - CLD/SFD, поиск петель обратной связи и просмотр уравнений в LaTeX.
@@ -198,15 +199,20 @@ SMTP, ограничить доступ к внутренним сервисам
   стабильность не заявляется. Отдельный confirmation 10×3 (`out/benchmark-openrouter-independent-confirmation-10x3-v3.json`)
   достиг 96,67% executable/semantic и 90% behavior при repair rate 16,67%. Targets пройдены,
   но nonlinear recovery имеет 2/3 executable и 1/3 behavior, а two-stage heating — 2/3 behavior.
-- В версии 0.4.0 добавлены deterministic explicit ODE builder, missing-stock
+- В версии 0.5.0 добавлены deterministic explicit ODE builder, missing-stock
   restoration, conservative delay-composition validation и нормализация inferred time settings.
   Regression acceptance2/blind достиг 100%; acceptance3 v6 и acceptance4 v5 также достигли 100%
   executable/semantic/behavior/graph (24/24 и 18/18). Независимый acceptance4 v1 ранее подтвердил
   100% на новых описаниях. Универсальная стабильность не заявляется: отдельные LLM-ответы
   могут исчерпать bounded repair и быть отклонены вместо возврата некорректной модели.
 - Внешний SDXorg corpus зафиксирован отдельно от LLM metrics: 154 Vensim-файла,
-  148 с эталоном, 16 импортированы и симулированы, 15 совпали численно. Большинство
-  остальных использует неподдерживаемые importer-конструкции; это не solver error-rate.
+  148 с эталоном, **35 imported, 35 simulated, 34 matched**. Поддерживаются dimensions,
+  indexed references, per-element constants/auxiliaries и numeric multidimensional arrays.
+  Macros, `:EXCEPT:` и element-specific stock derivatives пока не поддерживаются.
+  Rössler остаётся numerical compatibility case с 52 точками возле нуля.
+- Текущая локальная 30B на RTX 5090: acceptance2 — 95,83%, acceptance3 — 100% executable/semantic
+  и 87,5% behavior, acceptance4 — 100% по всем метрикам. Пороги 90/85/85 выполнены;
+  остаточные ошибки composition/topology не скрываются.
 - Редактор CLD/SFD и автоматическая симуляция после каждой генерации не входят
   в текущую версию.
 

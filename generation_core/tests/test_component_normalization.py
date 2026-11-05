@@ -109,6 +109,26 @@ def test_descriptive_id_and_first_order_parameter_are_normalized():
     assert ComponentPlan.model_validate(normalized).components[0].flow == "clearance"
 
 
+def test_identical_components_are_deduplicated_but_conflicts_are_preserved():
+    response = {
+        "components": [first_order(), first_order()],
+        "time": None,
+        "assumptions": [],
+    }
+    normalized = normalize_component_payload(response)
+    assert len(normalized["components"]) == 1
+    model = document(normalized["components"])
+    assert len({item.id for item in model.variables}) == len(model.variables)
+
+    conflicting = first_order()
+    conflicting["time_constant"] = 5
+    response["components"] = [first_order(), conflicting]
+    normalized = normalize_component_payload(response)
+    assert len(normalized["components"]) == 2
+    with pytest.raises(ModelValidationError, match="unique"):
+        document(normalized["components"])
+
+
 def test_matching_assumption_can_supply_missing_first_order_coefficient():
     response = {
         "components": [

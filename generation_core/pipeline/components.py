@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from collections import Counter
@@ -575,6 +576,15 @@ def normalize_component_payload(response: dict) -> dict:
                         or parameter.get("value") != value
                     ]
         components.append(item)
+    unique_components = []
+    seen = set()
+    for item in components:
+        signature = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique_components.append(item)
+    components = unique_components
     if len(components) == 2:
         delay = next((item for item in components if item.get("kind") == "delay"), None)
         transfer = next((item for item in components if item.get("kind") == "first_order"), None)

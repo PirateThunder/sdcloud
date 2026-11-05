@@ -9,6 +9,35 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.5.0 — 2026-11-06
+
+- **Structural resilience**: второй brief repair больше не получает malformed response в качестве
+  якоря; полностью совпадающие components удаляются идемпотентно, конфликтующие IDs по-прежнему
+  отклоняются. Добавлены regressions на обе ситуации.
+- **Локальная 30B acceptance (RTX 5090)**: acceptance2 — 95,83% executable/semantic/behavior,
+  acceptance3 — 100% executable/semantic и 87,5% behavior, acceptance4 — 100% по всем метрикам.
+  Пороги 90/85/85 выполнены. Отдельные локальные ошибки — derivative-topology mismatch и
+  composition ambiguity с двумя luggage stocks, а не solver failures.
+- **Vensim interoperability**: добавлены inline metadata, dimensions, indexed references,
+  per-element constants/auxiliaries и numeric multidimensional arrays. Stock-free function models
+  выполняются без dummy stocks. Исправлены unary power precedence, runtime naming, wildcard `dim!`
+  expansion и reference timestamp rounding. SDXorg улучшился с 16/16/15 до **35/35 imported/simulated
+  и 34 matched**; Rössler остаётся numerical compatibility case с 52 точками возле нуля.
+  Macros, `:EXCEPT:` и element-specific stock derivatives явно не поддерживаются.
+- **Проверки**: 231 core, 20 backend и 12 frontend tests, 2/2 browser E2E; Ruff, Biome,
+  TypeScript, lock-проверки и production frontend build зелёные.
+- **Lexical RAG prototype**: воспроизводимый `build_rag_corpus.py` собирает 24 проверенных
+  development-примера без acceptance/blind IDs. TF-IDF retrieval работает без vector DB и
+  embeddings, включается только через `LLM_RAG_ENABLED=1`, использует один полный ComponentPlan
+  с ограничением контекста и сохраняет source IDs в `generation_log`. Validators и deterministic
+  ODE builder обязательны; по умолчанию RAG выключен. Добавлены leakage, ranking, size-limit,
+  opt-in и provenance tests.
+- **RAG A/B**: acceptance4 не входит в retrieval corpus. No-RAG и lexical RAG достигли 100%
+  executable/semantic/behavior/graph (18/18) на одном pipeline `0cb682efa5fb968064218d2c0203c3cd3bdc0705077f56261eb9d6668a18520e`.
+  Качественного улучшения нет: average 8,469 с без RAG и 16,381 с с RAG; repair rate 11,11%
+  против 16,67%. RAG использовался во всех 18 cases, пять уникальных источников, максимум
+  1690 context chars. Оставлен opt-in, LoRA не начиналась. Полный offline suite — 224 core tests.
+
 ## 0.4.0 — 2026-11-05
 
 Семантика explicit ODE и независимая проверка обобщения.

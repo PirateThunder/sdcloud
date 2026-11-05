@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.4.0**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.5.0**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -139,7 +139,10 @@ time settings и сравнивает stocks с `output.tab`/`output.csv` пот
 числовых stock-точек не засчитывается. Отчёт разделяет no reference, import, simulation,
 reference и comparison stages. Для [SDXorg/test-models](https://github.com/SDXorg/test-models)
 зафиксирован commit `21aab02739dc5187bc9564e4d3de14e575905d2f`: 154 Vensim-файла,
-148 с эталоном, 16 импортированы и симулированы, 15 совпали численно. Это проверка
+148 с эталоном, 35 imported, 35 simulated, 34 matched. Поддерживаются dimensions,
+indexed references, per-element constants/auxiliaries и numeric multidimensional arrays.
+Macros, `:EXCEPT:` и element-specific stock derivatives пока не поддерживаются.
+Rössler сохраняет 52 numerical compatibility points возле нуля. Это проверка
 interoperability, а не генерации и не готовый text-to-model training dataset.
 `--artifacts-dir` дополнительно сохраняет prompt, model, simulation, успешные ответы LLM
 и стадии каждого случая. При повторе прежние JSON-стадии того же случая очищаются.
@@ -151,6 +154,30 @@ interoperability, а не генерации и не готовый text-to-mode
 Форматы входных JSON соответствуют Pydantic-схемам в `pipeline/schemas.py` и
 `pipeline/analysis_schemas.py`. Все параметры любого CLI можно посмотреть через
 `uv run python <script> --help`.
+
+## Lexical RAG (opt-in)
+
+Prototype использует TF-IDF cosine retrieval по описанию и ComponentPlan, без vector DB,
+embeddings или дополнительных зависимостей. Corpus содержит 24 уникальных development-описания,
+по одной проверенной модели на описание; `behavior_pass` и `semantic_pass` обязательны.
+Acceptance/blind corpora в retrieval не входят.
+
+```bash
+uv run python build_rag_corpus.py
+# В .env: LLM_RAG_ENABLED=1
+```
+
+`LLM_RAG_CORPUS_PATH` по умолчанию — `/app/pipeline/rag_examples.json` в Docker,
+`LLM_RAG_MAX_EXAMPLES=1`, `LLM_RAG_MIN_SCORE=0.08`, `LLM_RAG_MAX_CHARS=3500`.
+Пример включается только целиком, без обрезанного JSON. IDs источников записываются в
+`generation_log`; deterministic ODE builder, units/topology checks и bounded repair обязательны.
+По умолчанию `LLM_RAG_ENABLED=0`, поэтому текущее поведение генерации не меняется.
+Corpus уже включён в репозиторий; для его пересборки нужны benchmark-артефакты из `out/`.
+
+A/B на исключённом из retrieval acceptance4 (`out/benchmark-openrouter-ab-no-rag-acceptance4-6x3.json`
+и `out/benchmark-openrouter-ab-lexical-rag-acceptance4-6x3.json`): оба варианта достигли 100%
+по всем метрикам. Среднее время в этом прогоне — 8,469 с без RAG и 16,381 с с RAG;
+качественного преимущества не показано, поэтому prototype остаётся opt-in.
 
 ## Локальная LLM / vLLM
 
@@ -196,6 +223,9 @@ vLLM с `QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, `--max-model-len 16384` и
 concurrency=1): исходный 26×3 — 98,7% по всем метрикам, average duration 16,49 с;
 held-out 16×3 — 97,9% executable/semantic и 95,8% behavior, average duration 17,831 с.
 Pipeline hash обоих — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
+Acceptance2–4 на той же 30B: acceptance2 — 95,83% по всем метрикам, acceptance3 — 100%
+executable/semantic и 87,5% behavior, acceptance4 — 100% по всем метрикам. Пороги 90/85/85
+выполнены; остаточные composition/topology ошибки отклоняются без ослабления validators.
 Исходный OpenRouter 26×3 (`qwen/qwen3-30b-a3b-instruct-2507`): 94,87% по всем метрикам;
 confirmation v16 — 95,83%/93,75%, validation v13 — 100%. Local quality gate пройден.
 

@@ -30,6 +30,7 @@ from .prompts import (
     STAGE_REPAIR_PROMPT,
     VARIABLE_EXTRACTION_PROMPT,
 )
+from .rag import component_rag_context
 from .schemas import (
     Assumption,
     ComponentPlan,
@@ -279,7 +280,11 @@ async def _call_stage[T](
                 stage=stage,
                 error=str(exc)[:6000],
                 original_prompt=_json_excerpt(prompt, 20_000),
-                response=_json_excerpt(previous_response, 8_000),
+                response=(
+                    _json_excerpt(previous_response, 8_000)
+                    if stage != "brief" or budget.attempts == 1
+                    else ""
+                ),
             )
 
 
@@ -1010,7 +1015,12 @@ async def generate_model(
         budget=budget,
         workdir=workdir,
     )
+    rag_sources = []
     if pattern is None and request.base_model is None:
+        rag_context, rag_sources = component_rag_context(description)
+        if rag_sources:
+            _save_stage(workdir, "rag", {"sources": rag_sources, "context_chars": len(rag_context)})
+
         def parse_components(response: Any) -> tuple[ComponentPlan, Any]:
             plan = ComponentPlan.model_validate(normalize_component_payload(response))
             plan = apply_explicit_odes(plan, description)
@@ -1035,7 +1045,7 @@ async def generate_model(
             prompt=COMPONENT_PLAN_PROMPT.format(
                 description=description,
                 brief=brief.model_dump_json(indent=2),
-                component_guidance=COMPONENT_BRIEF_GUIDANCE,
+                component_guidance=COMPONENT_BRIEF_GUIDANCE + rag_context,
             ),
             system="You specify typed dynamic mechanisms. Return only JSON.",
             temperature=0.1,
@@ -1319,6 +1329,8 @@ async def generate_model(
         f"sfd: {len(document.sfd_data.edges)} edges",
         f"exports: {', '.join(formats)}",
     ]
+    if rag_sources:
+        log.append(f"rag: {', '.join(rag_sources)}")
     document = document.model_copy(
         update={
             "artifacts": {

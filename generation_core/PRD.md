@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0 и explicit ODE/composition hardening 0.4.0 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
+**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0 и structural/Vensim/RAG hardening 0.5.0 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -781,7 +781,7 @@ uv run ruff check .
 - Первый confirmation (`out/benchmark-openrouter-independent-confirmation-10x3.json`): 83,33% executable/semantic и 80% behavior; повтор v2: 83,33% по всем трём метрикам. Targets на новых описаниях не достигнуты. Это подтверждает, что development-independent 90,48% не является универсальной гарантией. Основные остаточные классы — coefficient-role errors в nonlinear recovery и массив вместо ModelBrief. Duplicate delay consumption и unique stock-name resolution исправлены без ослабления ODE validators; brief-specific repair и консервативное plural resolution добавлены для последующей проверки.
 - Финальный confirmation v3 (`out/benchmark-openrouter-independent-confirmation-10x3-v3.json`, pipeline `6b00fa72dcdb7e0314d5ee2b9811098b81b4d9b13311180e9ea443b9116f0ac5`): 96,67% executable/semantic (29/30), 90% behavior (27/30), repair rate 16,67%, average duration 7,751 с. Targets 90/85/85% достигнуты и на новом corpus. Nonlinear recovery: 2/3 executable и 1/3 behavior — один coefficient-role failure и один результат без ожидаемых sign changes. Two-stage heating: 3/3 executable и 2/3 behavior из-за unresolved variable name. Эти остаточные случаи остаются ограничениями, а не скрытыми успехами.
 
-## 25. Explicit ODE semantics и acceptance iterations (working tree)
+## 25. Explicit ODE semantics и acceptance iterations (0.5.0)
 
 - Targeted prompt/repair hardening устранил прежние ошибки coefficient roles и numeric delay fields: FitzHugh 3/3, nonlinear recovery + two-stage heating 6/6, transport 3/3. Behavior-oracle разрешает ожидаемое имя как отдельный token внутри составного stock ID только при единственном совпадении.
 - Первый новый blind acceptance 12×3 (`out/benchmark-openrouter-blind-acceptance-12x3-v1.json`): 100% executable/semantic и 94,44% behavior. Два failure в forced recovery показали потерю outer multiplier при раскрытии факторизованной формулы; этот corpus больше не считается независимым после анализа.
@@ -802,3 +802,20 @@ uv run ruff check .
 - Acceptance3 v6 (`out/benchmark-openrouter-acceptance3-8x3-v6-time-grid.json`) и acceptance4 v5 (`out/benchmark-openrouter-acceptance4-6x3-v5-time-grid.json`) достигли 100% executable/semantic/behavior/graph (24/24 и 18/18), pipeline `cff52f49177a0fa4a68470a8ac9eeadf8bd7c1b52c4c9604f32ab17c8b7a10ef`. Average duration — 10,73 и 16,822 с соответственно.
 - Acceptance2 v6 (`out/benchmark-openrouter-acceptance2-8x3-v6-time-grid.json`) достиг 95,83% executable/semantic/behavior/graph (23/24), pipeline `cff52f49177a0fa4a68470a8ac9eeadf8bd7c1b52c4c9604f32ab17c8b7a10ef`. Единственный failure — массив вместо ModelBrief после bounded repair; некорректная модель не была возвращена.
 - Offline suite: 218 core tests, Ruff и lock зелёные. Live-запросы выполнены только через OpenRouter 30B без GPU. RAG пока не подключался; acceptance4 v5 является no-RAG baseline для следующего A/B этапа.
+
+## 27. Lexical RAG prototype и A/B (0.5.0)
+
+- `build_rag_corpus.py` собирает corpus только из development independent/confirmation reports: один accepted model на description, обязательные `behavior_pass`, `semantic_pass` и непустой ComponentPlan. Получено 24 уникальных примера без acceptance/blind IDs. Corpus коммитится; пересборка требует исходные artifacts в `out/`.
+- `pipeline/rag.py` реализует TF-IDF cosine retrieval по описанию и ComponentPlan без vector DB, embeddings и новых зависимостей. По умолчанию используется один полный пример, максимум 3500 context chars; обрезанный JSON не передаётся. RAG включается только через `LLM_RAG_ENABLED=1`, sources сохраняются в `generation_log`. Tests проверяют ranking, duplicate IDs, size limit, default-off, generation provenance и corpus leakage filters.
+- A/B acceptance4 не входит в retrieval corpus. Оба варианта на pipeline `0cb682efa5fb968064218d2c0203c3cd3bdc0705077f56261eb9d6668a18520e` достигли 100% executable/semantic/behavior/graph (18/18). No-RAG: repair rate 11,11%, average 8,469 с; lexical RAG: repair rate 16,67%, average 16,381 с. RAG использовался во всех 18 cases, пять уникальных источников, максимум 1690 chars. Качественного преимущества не показано, увеличение latency зафиксировано как результат одного прогона без статистического вывода о причине.
+- Полный offline suite после RAG prototype: 224 core tests. RAG остаётся opt-in; LoRA/fine-tuning не начинались и не оправдываются текущими результатами. Для оценки пользы на более сложных корпусах требуется отдельный baseline, а не включение RAG ради самой технологии.
+
+## 28. Structural repair, local 30B acceptance и Vensim interoperability (0.5.0)
+
+- Второй brief repair больше не получает malformed response в качестве якоря. Полностью совпадающие components дедуплицируются идемпотентно, конфликтные IDs не скрываются. Добавлены regressions на оба случая.
+- Локальная 30B (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, RTX 5090, concurrency=1) прошла acceptance2–4: acceptance2 — 95,83% executable/semantic/behavior (23/24), acceptance3 — 100% executable/semantic и 87,5% behavior (21/24), acceptance4 — 100% (18/18). Pipeline hash — `7ee6697c02f943c771b19ae5273b0b9b0972ffe574e7ced198a6b02dcd916405`. Average duration — 14,008/21,898/11,714 с. Один derivative-topology mismatch отклонён; luggage composition содержит две stocks и не исправляется неоднозначным alias.
+- Vensim inline `~~|` нормализуется только вне quoted names. Добавлены dimensions, indexed references, per-element constants/auxiliaries и numeric multidimensional arrays. Element-specific stock derivatives, nested array assignment, macros и `:EXCEPT:` не поддерживаются явно.
+- Stock-free function models выполняются без dummy stocks; flow-based models по-прежнему требуют stock. Non-stock `ArrayExpression` экспортируется в отдельные per-element equations, поскольку PySD не принимает произвольные expression arrays. Unary power precedence исправлен для `(-Time)^n` и `-Time^n`.
+- PySD output читается через base variable names и `flatten_output=False`; subscripted DataArray разворачивается по elements, включая wildcard dimensions `dim!`. Runtime naming соответствует export. Reference timestamps с четырёхзначным округлением сопоставляются с фактическими grid points при abs tolerance 5,1e-5 без изменения `rtol/atol` значений.
+- SDXorg (`out/sdx-vensim-v14-timestamp.json`): 154 модели, 148 с эталоном, 35 imported, 35 simulated, 34 matched. До изменений было 16/16/15. Rössler сохраняет 52 failed points возле нуля; adaptive RK4/DOP853 расходится сильнее и не используется для маскировки численной несовместимости.
+- Полный offline suite: 231 core, 20 backend и 12 frontend tests; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. GPU использовался только для локальной 30B acceptance; импорт и SDXorg не требуют GPU.

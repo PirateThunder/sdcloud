@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from pipeline.external_benchmark import run_external_benchmark
+from pipeline.external_benchmark import _at, run_external_benchmark
 from pipeline.formats import import_vensim
 from pipeline.schemas import SimulationParameters
 from pipeline.simulation import simulate_model
@@ -88,3 +88,24 @@ def test_external_benchmark_rejects_stock_without_numeric_reference_points(tmp_p
     assert case["stage"] == "comparison"
     assert case["compared_points"] == 0
     assert case["missing_variables"] == ["Teacup Temperature"]
+
+
+def test_external_benchmark_compares_stock_free_auxiliaries(tmp_path):
+    source = """{UTF-8}
+answer=40 + 2 ~~|
+"""
+    document = import_vensim(source)
+    result = simulate_model(document, SimulationParameters())
+    reference = f"Time\tanswer\n0\t{result.variables['answer'][0]}\n1\t{result.variables['answer'][-1]}\n"
+    write_case(tmp_path, "function_only", source, reference)
+    report = run_external_benchmark(tmp_path)
+    assert report["matched"] == 1
+    assert report["results"][0]["compared_variables"] == 1
+    assert report["results"][0]["compared_points"] == 2
+
+
+def test_reference_timestamp_rounding_uses_the_actual_grid_point():
+    series = [0.0, 10.0, 20.0]
+    times = [0.0, 0.03125, 0.0625]
+    assert _at(series, times, 0.03125 + 0.00005) == 10.0
+    assert _at(series, times, 0.03125 + 0.001) != 10.0

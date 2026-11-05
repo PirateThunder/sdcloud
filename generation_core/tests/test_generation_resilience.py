@@ -120,6 +120,32 @@ async def test_brief_repair_requires_a_complete_object_not_an_array():
     assert '"stocks"' in llm.prompts["brief_repair_1"]
 
 
+async def test_second_brief_repair_drops_the_malformed_response_anchor():
+    class RepeatedBriefLLM(EarlyRepairLLM):
+        def __init__(self):
+            super().__init__()
+            self.prompts = {}
+
+        async def chat_json(self, prompt, *, stage, system=None, temperature=0.3, response_schema=None):
+            self.prompts[stage] = prompt
+            if stage in {"brief", "brief_repair_1"}:
+                return ["ONLY_BAD_ARRAY"]
+            return await super().chat_json(
+                prompt,
+                stage=stage,
+                system=system,
+                temperature=temperature,
+                response_schema=response_schema,
+            )
+
+    llm = RepeatedBriefLLM()
+    document = await generate_model(request(), llm, max_repairs=2)
+    assert document.repair_attempts == 2
+    assert list(llm.prompts) == ["brief", "brief_repair_1", "brief_repair_2", "variables", "equations"]
+    previous_response = llm.prompts["brief_repair_2"].split("Прежний ответ:\n", 1)[1]
+    assert "ONLY_BAD_ARRAY" not in previous_response
+
+
 async def test_stage_artifacts_include_successful_response_before_parsing(tmp_path):
     llm = EarlyRepairLLM(
         failures={

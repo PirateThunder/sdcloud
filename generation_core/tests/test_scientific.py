@@ -335,3 +335,49 @@ TIME STEP = 1
     assert document.time.final_time == 10
     result = simulate_model(document, SimulationParameters())
     assert result.variables["stocka"][-1] == 20
+
+
+def test_vensim_inline_metadata_and_quoted_tildes():
+    source = """{UTF-8}
+"Input ~~| label"=2 ~~|
+StockA=INTEG("Input ~~| label", 10) ~~|
+"""
+    document = import_vensim(source)
+    flow = next(item for item in document.variables if item.kind == "flow")
+    assert flow.label == "Input ~~| label"
+    result = simulate_model(document, SimulationParameters(final_time=1, time_step=0.25, saveper=0.25))
+    assert result.variables["stocka"][-1] == 12
+
+
+def test_stock_free_constant_model_runs_without_a_dummy_stock():
+    from pipeline.ir import lit
+    from pipeline.schemas import ConstantVariable, ModelDocument, TimeSettings
+
+    document = ModelDocument(
+        description="Stock-free function model",
+        time=TimeSettings(unit="year", final_time=1, time_step=0.25, saveper=0.25),
+        variables=[ConstantVariable(id="answer", kind="constant", expression=lit(42), units={})],
+    )
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["answer"] == [42, 42, 42, 42, 42]
+
+
+def test_unary_power_operands_preserve_their_meaning():
+    source = """{UTF-8}
+expo[sub1]=(-Time)^2 ~~|
+expo[sub2]=2^-2 ~~|
+expo[sub3]=-Time^2 ~~|
+subs:
+(sub1-sub3)
+    ~
+    ~ |
+INITIAL TIME=1 ~~|
+FINAL TIME=2 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+"""
+    document = import_vensim(source)
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["expo[sub1]"][0] == 1
+    assert result.variables["expo[sub2]"][0] == 0.25
+    assert result.variables["expo[sub3]"][0] == -1

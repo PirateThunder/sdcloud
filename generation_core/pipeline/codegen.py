@@ -107,6 +107,11 @@ def expression_to_vensim(
         )
         if expression.op == "mod":
             return f"MODULO({left}, {right})"
+        if expression.op == "pow":
+            if isinstance(expression.args[0], UnaryExpression):
+                left = f"({left})"
+            if isinstance(expression.args[1], UnaryExpression):
+                right = f"({right})"
         return f"({left} {operators[expression.op]} {right})"
     if isinstance(expression, CompareExpression):
         operators = {"lt": "<", "le": "<=", "gt": ">", "ge": ">=", "eq": "=", "ne": "<>"}
@@ -151,6 +156,33 @@ def expression_to_vensim(
     raise TypeError(f"unsupported expression: {type(expression).__name__}")
 
 
+def _array_assignment_lines(
+    variable,
+    document: ModelDocument,
+    names: dict[str, str],
+    tables: dict[str, str],
+    subscripts: dict[str, list[str]],
+) -> list[str]:
+    expression = variable.expression
+    dimensions = {item.id: item.elements for item in document.dimensions}
+    elements = list(itertools.product(*(dimensions[name] for name in variable.subscripts)))
+    if len(elements) != len(expression.values):
+        raise ValueError(f"array shape mismatch for {variable.id}")
+    lines = []
+    for index, values in enumerate(elements):
+        name = f"{runtime_name(variable.label or variable.id)}[{','.join(values)}]"
+        rhs = expression_to_vensim(expression.values[index], names, tables, subscripts)
+        lines.extend(
+            [
+                f"{name} = {rhs}",
+                f"\t~ {format_units(variable.units, variable.units_raw)}",
+                f"\t~ {variable.description or ''} |",
+                "",
+            ]
+        )
+    return lines
+
+
 def export_vensim(document: ModelDocument) -> str:
     names = {item.id: item.label or item.id for item in document.variables}
     tables = {item.id: item.label or item.id for item in document.tables}
@@ -187,6 +219,9 @@ def export_vensim(document: ModelDocument) -> str:
             ]
         )
     for variable in document.variables:
+        if variable.kind != "stock" and isinstance(variable.expression, ArrayExpression) and variable.subscripts:
+            lines.extend(_array_assignment_lines(variable, document, names, tables, subscripts))
+            continue
         name = runtime_variable_name(variable)
         if variable.kind == "stock":
             rhs = (

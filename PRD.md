@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core, backend и frontend 0.4.0 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
+**Статус:** generation_core, backend и frontend 0.5.0 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`

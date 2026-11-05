@@ -16,6 +16,7 @@ from .naming import identifier
 from .schemas import (
     CompareExpression,
     Expression,
+    IndexedExpression,
     LookupTable,
     ModelDocument,
     SimulationResult,
@@ -35,11 +36,21 @@ class Token:
 
 
 class ExpressionParser:
-    def __init__(self, source: str, names: dict[str, str], tables: dict[str, str]) -> None:
+    def __init__(
+        self,
+        source: str,
+        names: dict[str, str],
+        tables: dict[str, str],
+        *,
+        subscripts: dict[str, list[str]] | None = None,
+        element_dimensions: dict[str, list[str]] | None = None,
+    ) -> None:
         self.tokens = self._tokenize(source)
         self.position = 0
         self.names = names
         self.tables = tables
+        self.subscripts = subscripts or {}
+        self.element_dimensions = element_dimensions or {}
 
     @staticmethod
     def _tokenize(source: str) -> list[Token]:
@@ -124,7 +135,7 @@ class ExpressionParser:
             self.position += 1
             return unary(
                 "neg" if token.value == "-" else "pos" if token.value == "+" else "not",
-                self._expression(7),
+                self._expression(6),
             )
         if token.value == "(":
             self.position += 1
@@ -144,7 +155,8 @@ class ExpressionParser:
             self.position += 1
         name = " ".join(parts)
         if self.tokens[self.position].value == "[":
-            raise ModelValidationError("subscripts are not supported by this importer yet")
+            variable = self._variable(name)
+            return self._parse_indices(variable)
         if self.tokens[self.position].value == "(":
             self.position += 1
             args = []
@@ -174,6 +186,9 @@ class ExpressionParser:
             return call(function, *args)
         if name.lower() == "time":
             return time()
+        return ref(self._variable(name))
+
+    def _variable(self, name: str) -> str:
         variable = (
             self.names.get(name)
             or self.names.get(name.replace("_", " "))
@@ -181,7 +196,40 @@ class ExpressionParser:
         )
         if variable is None:
             raise ModelValidationError(f"unknown variable in imported expression: {name}")
-        return ref(variable)
+        return variable
+
+    def _parse_indices(self, variable: str) -> IndexedExpression:
+        dimensions = self.subscripts.get(variable, [])
+        self.position += 1
+        indices = {}
+        while True:
+            parts = []
+            while self.tokens[self.position].kind == "name":
+                parts.append(self.tokens[self.position].value)
+                self.position += 1
+            if not parts:
+                raise ModelValidationError("empty or invalid subscript index")
+            value = " ".join(parts)
+            if value in dimensions:
+                dimension = value
+                element = "*"
+            else:
+                candidates = self.element_dimensions.get(value, [])
+                dimension = candidates[0] if len(candidates) == 1 else None
+                if dimension is None and len(indices) < len(dimensions):
+                    dimension = dimensions[len(indices)]
+                element = value
+            if dimension not in dimensions or dimension in indices:
+                raise ModelValidationError(
+                    f"invalid subscript {value} for {variable}; expected {dimensions}"
+                )
+            indices[dimension] = element
+            if self.tokens[self.position].value == "]":
+                self.position += 1
+                return IndexedExpression(op="index", name=variable, indices=indices)
+            if self.tokens[self.position].value != ",":
+                raise ModelValidationError("unclosed subscript expression")
+            self.position += 1
 
 
 def _clean_label(value: str) -> str:
@@ -271,8 +319,29 @@ def _extract_vensim_tables(body: str) -> tuple[str, list[LookupTable], dict[str,
     return pattern.sub("", body), tables, names
 
 
+def _normalize_inline_metadata(source: str) -> str:
+    result = []
+    in_quotes = False
+    escaped = False
+    index = 0
+    while index < len(source):
+        if source.startswith("~~|", index) and not in_quotes:
+            result.append("\n~\n~ |")
+            index += 3
+            escaped = False
+            continue
+        character = source[index]
+        result.append(character)
+        if character == '"' and not escaped:
+            in_quotes = not in_quotes
+        escaped = not escaped if character == "\\" else False
+        index += 1
+    return "".join(result)
+
+
 def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocument:
     body = source.split("\\\\\\---/// Sketch information", 1)[0].replace("{UTF-8}", "")
+    body = _normalize_inline_metadata(body)
     body = re.sub(
         r"(?ms)^[ \t]*\*{3,}[ \t]*\r?\n[ \t]*\.Control[ \t]*\r?\n"
         r"[ \t]*\*{3,}~.*?^[ \t]*\|[ \t]*$",
@@ -280,6 +349,9 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
         body,
     )
     body, tables, tables_names = _extract_vensim_tables(body)
+    from .vensim_subscripts import remove_dimensions
+
+    body = remove_dimensions(body)
     record = re.compile(
         r"(?ms)^(?P<lhs>.+?)\s*=\s*(?P<rhs>.*?)(?=\n[ \t]*~|\Z)"
         r"(?:\n[ \t]*~[ \t]*(?P<units>[^\n]*))?"
@@ -306,6 +378,12 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
         )
     if not raw:
         raise ModelValidationError("Vensim model contains no equations")
+    if any(":EXCEPT:" in item["label"].upper() for item in raw):
+        raise ModelValidationError("Vensim :EXCEPT: assignments are not supported by this importer")
+    if any("[" in item["label"] for item in raw):
+        from .vensim_subscripts import import_subscripted
+
+        return import_subscripted(raw, controls, tables, tables_names, body, source_name, source)
     used: set[str] = set()
     labels = {item["label"] for item in raw}
     names = {}

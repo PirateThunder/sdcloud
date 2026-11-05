@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import itertools
 import math
 import subprocess
 from pathlib import Path
@@ -40,7 +41,7 @@ def _at(series: list[float], times: list[float], timestamp: float) -> float | No
     if timestamp < times[0] - 1e-9 or timestamp > times[-1] + 1e-9:
         return None
     for index, actual_time in enumerate(times):
-        if math.isclose(actual_time, timestamp, rel_tol=0, abs_tol=1e-8):
+        if math.isclose(actual_time, timestamp, rel_tol=0, abs_tol=5.1e-5):
             return series[index]
         if actual_time > timestamp:
             if index == 0:
@@ -57,17 +58,27 @@ def _compare(document, result, reference: dict, rtol: float, atol: float) -> dic
     compared_variables = 0
     compared_points = 0
     failed_points = 0
-    for variable in document.variables:
-        if variable.kind != "stock":
-            continue
+    comparable = [item for item in document.variables if item.kind == "stock"]
+    if not comparable:
+        comparable = [item for item in document.variables if item.kind in {"auxiliary", "constant"}]
+    dimensions = {item.id: item.elements for item in document.dimensions}
+    series = []
+    for variable in comparable:
         label = _label(variable.label or variable.id)
+        if not variable.subscripts:
+            series.append((label, result.variables[variable.id]))
+            continue
+        for elements in itertools.product(*(dimensions[name] for name in variable.subscripts)):
+            suffix = ",".join(elements)
+            series.append((f"{label}[{suffix}]", result.variables[f"{variable.id}[{suffix}]"]))
+    for label, values in series:
         expected = reference.get(label)
         if not expected:
             missing.append(label)
             continue
         compared_variables += 1
         for timestamp, expected_value in expected:
-            actual = _at(result.variables[variable.id], result.time, timestamp)
+            actual = _at(values, result.time, timestamp)
             if actual is None:
                 failed_points += 1
                 continue

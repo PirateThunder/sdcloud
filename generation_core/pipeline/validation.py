@@ -65,8 +65,10 @@ class ModelValidator:
             self.error("RESERVED_VARIABLE", "variables", f"reserved ids: {sorted(reserved)}")
         if len(self.tables) != len(self.document.tables):
             self.error("DUPLICATE_TABLE", "tables", "lookup table ids must be unique")
-        if not any(item.kind == "stock" for item in self.document.variables):
-            self.error("STOCK_REQUIRED", "variables", "model must contain at least one stock")
+        if not any(item.kind == "stock" for item in self.document.variables) and any(
+            item.kind == "flow" for item in self.document.variables
+        ):
+            self.error("STOCK_REQUIRED", "variables", "flow-based models require at least one stock")
         self._validate_dimensions()
         for variable in self.document.variables:
             path = f"variables.{variable.id}"

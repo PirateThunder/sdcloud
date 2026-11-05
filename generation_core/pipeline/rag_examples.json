@@ -1,0 +1,1372 @@
+{
+  "schema_version": "1.0",
+  "kind": "lexical_component_rag",
+  "source_reports": [
+    "benchmark-openrouter-independent-14x3-v6.json",
+    "benchmark-openrouter-fitz-hugh-v8-targeted.json",
+    "benchmark-openrouter-residual-transport-v8-targeted.json",
+    "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+    "benchmark-openrouter-residual-confirmation-v4-targeted.json"
+  ],
+  "examples": [
+    {
+      "id": "confirm_budget_step",
+      "description": "A project budget starts at 1000 dollar. Spending is 5 dollar/day until time=10 day, then increases to 20 dollar/day. Use a 30 day horizon and keep dollar and day units consistent. Model one outflow from the budget to an external sink.",
+      "components": [
+        {
+          "kind": "scheduled_flow",
+          "source": "Budget",
+          "target": "cloud:sink",
+          "flow": "Spending",
+          "rate": 5.0,
+          "rate_after": 20.0,
+          "change_time": 10.0,
+          "initial_source": 1000.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "dollar": 1
+          },
+          "target_units": null,
+          "time_unit": "day"
+        }
+      ],
+      "time": {
+        "unit": "day",
+        "initial_time": 0.0,
+        "final_time": 30.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "5c090bfd4503cd12dc1741a4834831f262e21abfe3297cc6f0fbc5b6d335afbd",
+        "expected_behavior": {
+          "kind": "event_change",
+          "variable": "budget",
+          "at": 10,
+          "after": 30,
+          "relation": "below",
+          "value": 600
+        }
+      }
+    },
+    {
+      "id": "confirm_finite_project_backlog",
+      "description": "A project starts with tasks=6. New work arrives at 12 task/day for the first 4 day and then stops. Completion follows min(tasks / service_time, max_service), with service_time=0.25 day and max_service=8 task/day. The task quantity must not become negative. Use a 20 day horizon and a nonnegative service policy.",
+      "components": [
+        {
+          "kind": "queue",
+          "stock": "tasks",
+          "arrivals": "new_work_arrival",
+          "service": "task_completion",
+          "service_time": 0.25,
+          "max_service": 8.0,
+          "arrival_rate": 12.0,
+          "initial": 6.0,
+          "units": {
+            "task": 1
+          },
+          "time_unit": "day",
+          "arrival_start_time": 0.0,
+          "arrival_end_time": 4.0
+        }
+      ],
+      "time": {
+        "unit": "day",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.0625,
+        "saveper": 0.0625
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "ca0e887db6b03c93e3ba2df86d043394230cc29d5dd9ea8cf15a19a88ac91164",
+        "expected_behavior": {
+          "kind": "steady_state",
+          "variable": "tasks",
+          "value": 0,
+          "tolerance": 0.01,
+          "nonnegative": true
+        }
+      }
+    },
+    {
+      "id": "confirm_interval_infusion",
+      "description": "A nutrient tank starts with nutrient_mass=2 mg. A pump adds 4 mg/minute during the first 3 minute and then stops. Natural removal is first order with coefficient=0.2 minute^-1. Use a 25 minute horizon and mg and minute units.",
+      "components": [
+        {
+          "kind": "conditional_inflow",
+          "stock": "nutrient_mass",
+          "inflow": "nutrient_inflow",
+          "outflow": "nutrient_outflow",
+          "rate": 4.0,
+          "start_time": 0.0,
+          "end_time": 3.0,
+          "elimination_rate": 0.2,
+          "initial": 2.0,
+          "units": {
+            "mg": 1
+          },
+          "time_unit": "minute"
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 25.0,
+        "time_step": 0.1,
+        "saveper": 0.1
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "48dd69e035735655b5ee166909a106b1de29009b6ccba8a212c7254e31ddb9e9",
+        "expected_behavior": {
+          "kind": "event_change",
+          "variable": "nutrient_mass",
+          "at": 3,
+          "after": 25,
+          "relation": "decrease"
+        }
+      }
+    },
+    {
+      "id": "confirm_logistic_harvest",
+      "description": "A biological reserve follows d(biomass)/dt = 0.3*biomass*(1 - biomass/200) - 0.1*biomass. Start with biomass=20 tonne and use an 80 year horizon. Keep tonne and year units consistent and represent 200 tonne as a named upper bound.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "biomass",
+          "initial": 20.0,
+          "units": {
+            "tonne": 1
+          },
+          "time_unit": "year",
+          "terms": [
+            {
+              "coefficient": "growth_rate",
+              "expression": "biomass * (1 - biomass / upper_bound_biomass)",
+              "sign": 1,
+              "name": "logistic_growth"
+            },
+            {
+              "coefficient": "mortality_rate",
+              "expression": "biomass",
+              "sign": -1,
+              "name": "mortality_loss"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "growth_rate",
+              "value": 0.3,
+              "role": "rate",
+              "units": null
+            },
+            {
+              "id": "mortality_rate",
+              "value": 0.1,
+              "role": "rate",
+              "units": null
+            },
+            {
+              "id": "upper_bound_biomass",
+              "value": 200.0,
+              "role": "threshold",
+              "units": null
+            }
+          ]
+        }
+      ],
+      "time": {
+        "unit": "year",
+        "initial_time": 0.0,
+        "final_time": 80.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "44f91075cb7a54f8f07161038935de617738a934293d0b4bf56a84e4fd3b6b7e",
+        "expected_behavior": {
+          "kind": "monotonic",
+          "variable": "biomass",
+          "direction": "increasing"
+        }
+      }
+    },
+    {
+      "id": "confirm_nonlinear_recovery",
+      "description": "A two-state recovery system starts with v=1 and w=0. Use dv/dt = v - v^3/3 - w + 0.8 and dw/dt = 0.1*(v + 0.6 - 0.75*w). Both states have units `state`, model time has unit `time`, and the horizon is 100 time units. Use named scale constants for dimensional consistency.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "v",
+          "initial": 1.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "v",
+              "sign": 1,
+              "name": "linear_v"
+            },
+            {
+              "coefficient": "cubic_coefficient",
+              "expression": "v^3",
+              "sign": -1,
+              "name": "cubic_v"
+            },
+            {
+              "coefficient": 1.0,
+              "expression": "w",
+              "sign": -1,
+              "name": "inhibition_by_w"
+            },
+            {
+              "coefficient": "external_drive",
+              "expression": "1",
+              "sign": 1,
+              "name": "external_drive"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "cubic_coefficient",
+              "value": 1.0,
+              "role": "scale",
+              "units": null
+            },
+            {
+              "id": "external_drive",
+              "value": 0.8,
+              "role": "scale",
+              "units": null
+            }
+          ]
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "w",
+          "initial": 0.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": "recovery_rate",
+              "expression": "v + threshold_offset - self_inhibition_scale * w",
+              "sign": 1,
+              "name": "recovery_dynamics"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "recovery_rate",
+              "value": 0.1,
+              "role": "rate",
+              "units": null
+            },
+            {
+              "id": "threshold_offset",
+              "value": 0.6,
+              "role": "threshold",
+              "units": null
+            },
+            {
+              "id": "self_inhibition_scale",
+              "value": 0.75,
+              "role": "scale",
+              "units": null
+            }
+          ]
+        }
+      ],
+      "time": {
+        "unit": "time",
+        "initial_time": 0.0,
+        "final_time": 100.0,
+        "time_step": 0.01,
+        "saveper": 0.02
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-residual-confirmation-v4-targeted.json",
+        "run": 3,
+        "model_hash": "2468a4ebffc1665d03804f42e34a8f50e6fdd3ea293191a3234566707e6f4599",
+        "expected_behavior": {
+          "kind": "sign_changes",
+          "variable": "v",
+          "minimum": 2
+        }
+      }
+    },
+    {
+      "id": "confirm_server_burst",
+      "description": "A server starts with packets=0. Traffic arrives at 60 packet/second for the first 2 second and then stops. Processing follows min(packets / service_time, max_throughput), with service_time=0.2 second and max_throughput=50 packet/second. The packet quantity must stay nonnegative. Use a 15 second horizon.",
+      "components": [
+        {
+          "kind": "queue",
+          "stock": "packets",
+          "arrivals": "arrival_flow",
+          "service": "processing_flow",
+          "service_time": 0.2,
+          "max_service": 50.0,
+          "arrival_rate": 60.0,
+          "initial": 0.0,
+          "units": {
+            "packet": 1
+          },
+          "time_unit": "second",
+          "arrival_start_time": 0.0,
+          "arrival_end_time": 2.0
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 15.0,
+        "time_step": 0.05,
+        "saveper": 0.05
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "e46be0b26228be0c2c8b231b53a4788dece64cb122caabee463a56a3f969ff38",
+        "expected_behavior": {
+          "kind": "steady_state",
+          "variable": "packets",
+          "value": 0,
+          "tolerance": 0.01,
+          "nonnegative": true
+        }
+      }
+    },
+    {
+      "id": "confirm_shipment_delay",
+      "description": "A depot receives parts through a third-order material response with transport_time=2 second. The external part_rate is 0 item/second until time=3 second and 12 item/second afterwards. The response starts empty with initial output rate=0 item/second. Depot consumption has time constant=3 second and parts starts at 0 item. Use a 20 second horizon.",
+      "components": [
+        {
+          "kind": "delay",
+          "stock": "parts_in_depot",
+          "inflow": "inflow_to_depot",
+          "outflow": "outflow_from_depot",
+          "input_rate": 0.0,
+          "delay_time": 2.0,
+          "initial_stock": 0.0,
+          "initial_delayed_rate": 0.0,
+          "stock_units": {
+            "item": 1
+          },
+          "time_unit": "second",
+          "consumption_time": 3.0,
+          "input_rate_after": 12.0,
+          "rate_change_time": 3.0
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "e40f58d691661730d64e9fa79f21cf3cdb2a5ebdee564c255e2d067929027925",
+        "expected_behavior": {
+          "kind": "delayed_response",
+          "variable": "parts",
+          "at": 1,
+          "before_max": 0,
+          "after_min": 10
+        }
+      }
+    },
+    {
+      "id": "confirm_training_pipeline",
+      "description": "A certification cycle has two experience levels: apprentice=100 person and master=0 person. Apprentices become masters with coefficient=0.1 week^-1, and masters leave with coefficient=0.02 week^-1. No new apprentices arrive. Use an 80 week horizon and person and week units.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "apprentice",
+          "target": "master",
+          "flow": "apprentice_to_master",
+          "coefficient": 0.1,
+          "time_constant": null,
+          "initial_source": 100.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "person": 1
+          },
+          "target_units": {
+            "person": 1
+          },
+          "time_unit": "week"
+        },
+        {
+          "kind": "first_order",
+          "source": "master",
+          "target": "cloud:sink",
+          "flow": "master_leave",
+          "coefficient": 0.02,
+          "time_constant": null,
+          "initial_source": 0.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "person": 1
+          },
+          "target_units": null,
+          "time_unit": "week"
+        }
+      ],
+      "time": {
+        "unit": "week",
+        "initial_time": 0.0,
+        "final_time": 80.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "dfcd967d46c9664d60558ca7ac0e952d02b227f04c75219174ec6e5809ecbfcc",
+        "expected_behavior": {
+          "kind": "cascade",
+          "variable": "master",
+          "after": 5
+        }
+      }
+    },
+    {
+      "id": "confirm_two_stage_heating",
+      "description": "Two thermal reservoirs exchange energy. hot starts at 80 heat_unit and warm at 20 heat_unit. Energy moves from hot to warm with coefficient=0.2 minute^-1, while warm loses energy to the environment with coefficient=0.1 minute^-1. There is no heater. Use a 50 minute horizon and keep heat_unit and minute units consistent.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "hot",
+          "target": "warm",
+          "flow": "energy_transfer_from_hot_to_warm",
+          "coefficient": 0.2,
+          "time_constant": null,
+          "initial_source": 80.0,
+          "initial_target": 20.0,
+          "source_units": {
+            "heat_unit": 1
+          },
+          "target_units": {
+            "heat_unit": 1
+          },
+          "time_unit": "minute"
+        },
+        {
+          "kind": "first_order",
+          "source": "warm",
+          "target": "cloud:environment",
+          "flow": "energy_loss_from_warm_to_environment",
+          "coefficient": 0.1,
+          "time_constant": null,
+          "initial_source": 20.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "heat_unit": 1
+          },
+          "target_units": null,
+          "time_unit": "minute"
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 50.0,
+        "time_step": 0.1,
+        "saveper": 0.1
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-residual-confirmation-v4-targeted.json",
+        "run": 3,
+        "model_hash": "55e771183bdba557898a3ef8887fa2a94021d2b4d0d7e5bdf7ba7d60eb4b4af4",
+        "expected_behavior": {
+          "kind": "cascade",
+          "variable": "warm",
+          "after": 2
+        }
+      }
+    },
+    {
+      "id": "confirm_undamped_oscillator",
+      "description": "A lossless mechanical oscillator starts with displacement=2 meter and speed=0 meter/second. Its acceleration is -9*displacement with matching units and no damping. Use a 20 second horizon and meter and second units.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "displacement",
+          "initial": 2.0,
+          "units": {
+            "meter": 1
+          },
+          "time_unit": "second",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "velocity",
+              "sign": 1,
+              "name": "velocity_contribution"
+            }
+          ],
+          "parameters": []
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "velocity",
+          "initial": 0.0,
+          "units": {
+            "meter": 1,
+            "second": -1
+          },
+          "time_unit": "second",
+          "terms": [
+            {
+              "coefficient": 9.0,
+              "expression": "displacement",
+              "sign": -1,
+              "name": "acceleration_term"
+            }
+          ],
+          "parameters": []
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.05,
+        "saveper": 0.05
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-confirmation-10x3-v3.json",
+        "run": 3,
+        "model_hash": "28be28d32e776cb05bd8182d8ab24dcb7d0e4d90219cc6b5b9d18e234b9562ef",
+        "expected_behavior": {
+          "kind": "sign_changes",
+          "variable": "displacement",
+          "minimum": 4
+        }
+      }
+    },
+    {
+      "id": "independent_allee",
+      "description": "A small animal group follows an Allee effect: d(animals)/dt = 0.2*animals*(animals/10 - 1)*(1 - animals/100) - 0.05*animals. Start with animals=5 and use a 100 year horizon. Keep animal and year units consistent.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "animals",
+          "initial": 5.0,
+          "units": {
+            "animal": 1
+          },
+          "time_unit": "year",
+          "terms": [
+            {
+              "coefficient": 0.2,
+              "expression": "animals * (animals / Allee_threshold - 1) * (1 - animals / carrying_capacity)",
+              "sign": 1,
+              "name": "allee_growth"
+            },
+            {
+              "coefficient": 0.05,
+              "expression": "animals",
+              "sign": -1,
+              "name": "mortality"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "Allee_threshold",
+              "value": 10.0,
+              "role": "threshold",
+              "units": null
+            },
+            {
+              "id": "carrying_capacity",
+              "value": 100.0,
+              "role": "threshold",
+              "units": null
+            }
+          ]
+        }
+      ],
+      "time": {
+        "unit": "year",
+        "initial_time": 0.0,
+        "final_time": 100.0,
+        "time_step": 0.1,
+        "saveper": 0.1
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "ed0364f9f59b29b048c45bddeb45824c8fc8790d50acc33af32f7a3deb70a0da",
+        "expected_behavior": {
+          "kind": "monotonic",
+          "variable": "animals",
+          "direction": "decreasing"
+        }
+      }
+    },
+    {
+      "id": "independent_appointment_queue",
+      "description": "A clinic starts with waiting_people=40. It serves through service_flow = min(waiting_people / service_time, max_service), where service_time=0.125 minute and max_service=8 person/minute. New arrivals add 2 person/minute. waiting_people must not become negative; use a nonnegative service policy. Use a 30 minute horizon.",
+      "components": [
+        {
+          "kind": "queue",
+          "stock": "waiting_people",
+          "arrivals": "arrival_flow",
+          "service": "service_flow",
+          "service_time": 0.125,
+          "max_service": 8.0,
+          "arrival_rate": 2.0,
+          "initial": 40.0,
+          "units": {
+            "person": 1
+          },
+          "time_unit": "minute",
+          "arrival_start_time": 0.0,
+          "arrival_end_time": null
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 30.0,
+        "time_step": 0.03125,
+        "saveper": 0.03125
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "1285871b8f388ac460461e05378b9400021d7267a4a8559615883daf6992b6ec",
+        "expected_behavior": {
+          "kind": "steady_state",
+          "variable": "waiting_people",
+          "value": 0.25,
+          "tolerance": 0.005,
+          "nonnegative": true
+        }
+      }
+    },
+    {
+      "id": "independent_battery_load",
+      "description": "A battery starts with charge_fraction=0.9. It discharges at 0.01/second until time=10 second, then the load increases to 0.02/second. Keep charge_fraction dimensionless and use a 30 second horizon.",
+      "components": [
+        {
+          "kind": "scheduled_flow",
+          "source": "charge_fraction",
+          "target": "cloud:sink",
+          "flow": "discharge_rate",
+          "rate": 0.01,
+          "rate_after": 0.02,
+          "change_time": 10.0,
+          "initial_source": 0.9,
+          "initial_target": 0.0,
+          "source_units": {},
+          "target_units": null,
+          "time_unit": "second"
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 30.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "e4fae738b67c805e081973d531114b6e9d704e7145d2b39fcc2a701f18d11a12",
+        "expected_behavior": {
+          "kind": "event_change",
+          "variable": "charge_fraction",
+          "at": 10,
+          "after": 30,
+          "relation": "below",
+          "value": 0.6
+        }
+      }
+    },
+    {
+      "id": "independent_chemical_chain",
+      "description": "In a reactor, chemical_a=50 mole converts to chemical_b with coefficient=0.4 second^-1. chemical_b then converts to output_c with coefficient=0.1 second^-1. chemical_b starts at 0 mole and no material is added. Use a 60 second horizon.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "chemical_a",
+          "target": "chemical_b",
+          "flow": "conversion_a_to_b",
+          "coefficient": 0.4,
+          "time_constant": null,
+          "initial_source": 50.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "mole": 1
+          },
+          "target_units": {
+            "mole": 1
+          },
+          "time_unit": "second"
+        },
+        {
+          "kind": "first_order",
+          "source": "chemical_b",
+          "target": "output_c",
+          "flow": "conversion_b_to_c",
+          "coefficient": 0.1,
+          "time_constant": null,
+          "initial_source": 0.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "mole": 1
+          },
+          "target_units": {
+            "mole": 1
+          },
+          "time_unit": "second"
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 60.0,
+        "time_step": 0.1,
+        "saveper": 0.1
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "476f7dd13b8d7dbd55d4beda7ad9c63cb6d15574f476bec69f6cd069e9c94fde",
+        "expected_behavior": {
+          "kind": "cascade",
+          "variable": "chemical_b",
+          "after": 2
+        }
+      }
+    },
+    {
+      "id": "independent_damped_spring",
+      "description": "A spring-mass system has position=1 m and velocity=0 m/second. Its acceleration is -4*position - 0.4*velocity, with matching units. Use a 20 second horizon.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "position",
+          "initial": 1.0,
+          "units": {
+            "meter": 1
+          },
+          "time_unit": "second",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "velocity",
+              "sign": 1,
+              "name": "velocity_contribution"
+            }
+          ],
+          "parameters": []
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "velocity",
+          "initial": 0.0,
+          "units": {
+            "meter_per_second": 1
+          },
+          "time_unit": "second",
+          "terms": [
+            {
+              "coefficient": 4.0,
+              "expression": "position",
+              "sign": -1,
+              "name": "spring_force"
+            },
+            {
+              "coefficient": 0.4,
+              "expression": "velocity",
+              "sign": -1,
+              "name": "damping_force"
+            }
+          ],
+          "parameters": []
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.05,
+        "saveper": 0.05
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "0b5f986adbb4d57b9658b6a5f80c3be78e4234750b8ea3acc445f3b329f89bfc",
+        "expected_behavior": {
+          "kind": "sign_changes",
+          "variable": "position",
+          "minimum": 2
+        }
+      }
+    },
+    {
+      "id": "independent_drug_infusion",
+      "description": "A patient receives a drug by infusion at 10 mg/minute for the first 2 minute, then infusion stops. Elimination is first order with coefficient=0.1 minute^-1 and drug_mass starts at 0 mg. Use a 20 minute horizon.",
+      "components": [
+        {
+          "kind": "conditional_inflow",
+          "stock": "drug_mass",
+          "inflow": "infusion_rate",
+          "outflow": "elimination_rate",
+          "rate": 10.0,
+          "start_time": 0.0,
+          "end_time": 2.0,
+          "elimination_rate": 0.1,
+          "initial": 0.0,
+          "units": {
+            "mg": 1
+          },
+          "time_unit": "minute"
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.25,
+        "saveper": 0.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "2a512ad90014c09d64c976e80ad4c07551bb76578d76930ae3724168b1c875cf",
+        "expected_behavior": {
+          "kind": "event_change",
+          "variable": "drug_mass",
+          "at": 2,
+          "after": 20,
+          "relation": "decrease"
+        }
+      }
+    },
+    {
+      "id": "independent_fitz_hugh",
+      "description": "A FitzHugh-Nagumo neuron starts with v=1 and w=0. Use dv/dt = v - v^3/3 - w + 0.5 and dw/dt = 0.08*(v + 0.7 - 0.8*w). Use units `state` for v/w and `time` as the model time unit, with named scale constants for dimensional consistency and a 100 time unit horizon.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "v",
+          "initial": 1.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "v",
+              "sign": 1,
+              "name": "linear_v"
+            },
+            {
+              "coefficient": "cubic_coefficient",
+              "expression": "v^3",
+              "sign": -1,
+              "name": "cubic_v"
+            },
+            {
+              "coefficient": 1.0,
+              "expression": "w",
+              "sign": -1,
+              "name": "inhibition_by_w"
+            },
+            {
+              "coefficient": 0.5,
+              "expression": "1",
+              "sign": 1,
+              "name": "external_stimulus"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "cubic_coefficient",
+              "value": 0.3333333333333333,
+              "role": "scale",
+              "units": null
+            }
+          ]
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "w",
+          "initial": 0.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": "time_scale",
+              "expression": "v + 0.7 - 0.8 * w",
+              "sign": 1,
+              "name": "activation_and_recovery"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "time_scale",
+              "value": 0.08,
+              "role": "rate",
+              "units": null
+            }
+          ]
+        }
+      ],
+      "time": {
+        "unit": "time",
+        "initial_time": 0.0,
+        "final_time": 100.0,
+        "time_step": 0.01,
+        "saveper": 0.02
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-fitz-hugh-v8-targeted.json",
+        "run": 3,
+        "model_hash": "eb9f6396f3ca8174c65799d3b9913147b61d3f1817306a1ee285bf2cf63dd329",
+        "expected_behavior": {
+          "kind": "sign_changes",
+          "variable": "v",
+          "minimum": 2
+        }
+      }
+    },
+    {
+      "id": "independent_lactate",
+      "description": "After intense exercise, lactate_level=8 mmol/litre. Synthesis has stopped, and clearance uses coefficient=0.15 minute^-1. Use a 30 minute horizon and a first-order elimination flow.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "lactate_level",
+          "target": "cloud:sink",
+          "flow": "lactate_clearance",
+          "coefficient": 0.15,
+          "time_constant": null,
+          "initial_source": 8.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "mmol": 1,
+            "litre": -1
+          },
+          "target_units": null,
+          "time_unit": "minute"
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 30.0,
+        "time_step": 0.15,
+        "saveper": 0.15
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "7e8b11c13201d8e56924f2974ccce05ce1acc99545c856c129ab315963928e8e",
+        "expected_behavior": {
+          "kind": "analytic_exponential",
+          "variable": "lactate_level",
+          "initial": 8,
+          "rate": -0.15,
+          "time": 30,
+          "tolerance": 0.02
+        }
+      }
+    },
+    {
+      "id": "independent_radioactive_chain",
+      "description": "An isotope sample contains parent=100 atom and daughter=0 atom. The parent transforms into the daughter with coefficient=0.2 day^-1, and the daughter is removed with coefficient=0.05 day^-1. Use a 60 day horizon and keep atom and day units consistent.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "parent",
+          "target": "daughter",
+          "flow": "decay",
+          "coefficient": 0.2,
+          "time_constant": null,
+          "initial_source": 100.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "atom": 1
+          },
+          "target_units": {
+            "atom": 1
+          },
+          "time_unit": "day"
+        },
+        {
+          "kind": "first_order",
+          "source": "daughter",
+          "target": "cloud:sink",
+          "flow": "removal",
+          "coefficient": 0.05,
+          "time_constant": null,
+          "initial_source": 0.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "atom": 1
+          },
+          "target_units": null,
+          "time_unit": "day"
+        }
+      ],
+      "time": {
+        "unit": "day",
+        "initial_time": 0.0,
+        "final_time": 60.0,
+        "time_step": 0.5,
+        "saveper": 0.5
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "1e139651e8a6ec34234392a32aef33ccd2ef443e673e7635bec473f93b7d49a2",
+        "expected_behavior": {
+          "kind": "cascade",
+          "variable": "daughter",
+          "after": 5
+        }
+      }
+    },
+    {
+      "id": "independent_rc_discharge",
+      "description": "A capacitor in an RC circuit starts with charge=5 coulomb. It discharges through a resistor with RC time constant=5 second. Represent capacitor charge and its discharge current, with no charging input. Use second as the time unit and a 50 second horizon.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "capacitor_charge",
+          "target": "cloud:sink",
+          "flow": "discharge_current",
+          "coefficient": 0.2,
+          "time_constant": null,
+          "initial_source": 5.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "coulomb": 1
+          },
+          "target_units": null,
+          "time_unit": "second"
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 50.0,
+        "time_step": 1.25,
+        "saveper": 1.25
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "c0f94741b8e38e7e5cee9c2d2bb67c5d9a1b0296af0353097729199cdb87a2cc",
+        "expected_behavior": {
+          "kind": "analytic_exponential",
+          "variable": "charge",
+          "aliases": [
+            "capacitor_charge",
+            "charge_on_capacitor"
+          ],
+          "initial": 5,
+          "rate": -0.2,
+          "time": 50,
+          "tolerance": 0.02
+        }
+      }
+    },
+    {
+      "id": "independent_rossler",
+      "description": "A Rössler system has x=1, y=1, z=0. Its rates are -y-z, x+0.2y, and 0.2+z*(x-5.7). Use units `state` for x/y/z and `time` as the model time unit, with named scale constants for dimensional consistency and a 100 time unit horizon.",
+      "components": [
+        {
+          "kind": "polynomial_ode",
+          "stock": "x",
+          "initial": 1.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "y",
+              "sign": -1,
+              "name": "y_negation"
+            },
+            {
+              "coefficient": 1.0,
+              "expression": "z",
+              "sign": -1,
+              "name": "z_negation"
+            }
+          ],
+          "parameters": []
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "y",
+          "initial": 1.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": 1.0,
+              "expression": "x",
+              "sign": 1,
+              "name": "x_positive"
+            },
+            {
+              "coefficient": 0.2,
+              "expression": "y",
+              "sign": 1,
+              "name": "y_growth"
+            }
+          ],
+          "parameters": []
+        },
+        {
+          "kind": "polynomial_ode",
+          "stock": "z",
+          "initial": 0.0,
+          "units": {
+            "state": 1
+          },
+          "time_unit": "time",
+          "terms": [
+            {
+              "coefficient": 0.2,
+              "expression": "1",
+              "sign": 1,
+              "name": "constant_offset"
+            },
+            {
+              "coefficient": 1.0,
+              "expression": "z * (x - x_threshold)",
+              "sign": 1,
+              "name": "nonlinear_coupling"
+            }
+          ],
+          "parameters": [
+            {
+              "id": "x_threshold",
+              "value": 5.7,
+              "role": "threshold",
+              "units": null
+            }
+          ]
+        }
+      ],
+      "time": {
+        "unit": "time",
+        "initial_time": 0.0,
+        "final_time": 100.0,
+        "time_step": 0.01,
+        "saveper": 0.02
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "5587044eaad9116c7a37471fbfbcbec7dace041954e1c8b09804c8031be0b99e",
+        "expected_behavior": {
+          "kind": "sign_changes",
+          "variable": "x",
+          "minimum": 2
+        }
+      }
+    },
+    {
+      "id": "independent_router_burst",
+      "description": "A router starts with packets=0. Incoming traffic is 100 packet/second for the first 5 second and then stops. Processing uses service_time=0.5 second and max_throughput=40 packet/second. Use a 20 second horizon and keep packet and second units consistent.",
+      "components": [
+        {
+          "kind": "queue",
+          "stock": "packets_in_buffer",
+          "arrivals": "incoming_traffic",
+          "service": "processing_rate",
+          "service_time": 0.5,
+          "max_service": 40.0,
+          "arrival_rate": 100.0,
+          "initial": 0.0,
+          "units": {
+            "packet": 1
+          },
+          "time_unit": "second",
+          "arrival_start_time": 0.0,
+          "arrival_end_time": 5.0
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 20.0,
+        "time_step": 0.125,
+        "saveper": 0.125
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "eed01cbf7c5bc6bbb436529acd202efe7087b18e3369ee80ecb33589c46f038c",
+        "expected_behavior": {
+          "kind": "steady_state",
+          "variable": "packets",
+          "aliases": [
+            "packets_in_buffer"
+          ],
+          "value": 0,
+          "tolerance": 0.01,
+          "nonnegative": true
+        }
+      }
+    },
+    {
+      "id": "independent_tank_cascade",
+      "description": "Two tanks are connected in series. upper contains 100 litre and lower contains 0 litre. upper drains into lower with time constant=2 minute; lower drains to the environment with time constant=5 minute. There is no refill. Use a 40 minute horizon.",
+      "components": [
+        {
+          "kind": "first_order",
+          "source": "upper_tank",
+          "target": "lower_tank",
+          "flow": "flow_to_lower",
+          "coefficient": null,
+          "time_constant": 2.0,
+          "initial_source": 100.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "litre": 1
+          },
+          "target_units": {
+            "litre": 1
+          },
+          "time_unit": "minute"
+        },
+        {
+          "kind": "first_order",
+          "source": "lower_tank",
+          "target": "cloud:sink",
+          "flow": "flow_to_environment",
+          "coefficient": null,
+          "time_constant": 5.0,
+          "initial_source": 0.0,
+          "initial_target": 0.0,
+          "source_units": {
+            "litre": 1
+          },
+          "target_units": null,
+          "time_unit": "minute"
+        }
+      ],
+      "time": {
+        "unit": "minute",
+        "initial_time": 0.0,
+        "final_time": 40.0,
+        "time_step": 0.5,
+        "saveper": 0.5
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-independent-14x3-v6.json",
+        "run": 3,
+        "model_hash": "075e9dcf08c5196ad1c64c1dc0c3fdced3a616e9c8f344ca71124e6e8edf3d38",
+        "expected_behavior": {
+          "kind": "cascade",
+          "variable": "lower",
+          "aliases": [
+            "lower_tank",
+            "lower_tank_volume",
+            "lower_volume"
+          ],
+          "after": 2
+        }
+      }
+    },
+    {
+      "id": "independent_transport_lag",
+      "description": "A workshop receives blanks through a third-order transport lag with transport_time=4 second. The incoming blank_rate is 10 item/second until time=5 second and 20 item/second afterwards. The workshop consumes blanks with time constant=2 second and starts with blanks=0 item. The transport lag starts empty with initial transport inflow=0 item/second. Use a 30 second horizon.",
+      "components": [
+        {
+          "kind": "delay",
+          "stock": "blanks",
+          "inflow": "transport_outflow",
+          "outflow": "consumption_rate",
+          "input_rate": 10.0,
+          "delay_time": 4.0,
+          "initial_stock": 0.0,
+          "initial_delayed_rate": 0.0,
+          "stock_units": {
+            "item": 1
+          },
+          "time_unit": "second",
+          "consumption_time": 2.0,
+          "input_rate_after": 20.0,
+          "rate_change_time": 5.0
+        }
+      ],
+      "time": {
+        "unit": "second",
+        "initial_time": 0.0,
+        "final_time": 30.0,
+        "time_step": 0.5,
+        "saveper": 0.5
+      },
+      "assumptions": [],
+      "source": {
+        "report": "benchmark-openrouter-residual-transport-v8-targeted.json",
+        "run": 3,
+        "model_hash": "b24eba43559c1121a43af042153fccc14dfb91fbface5acc6350df67d07c80af",
+        "expected_behavior": {
+          "kind": "delayed_response",
+          "variable": "blanks",
+          "at": 1,
+          "before_max": 0.1,
+          "after_min": 10
+        }
+      }
+    }
+  ]
+}

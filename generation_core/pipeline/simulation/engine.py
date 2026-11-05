@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..codegen import load_pysd_model, series_names
+from ..codegen import load_pysd_model, runtime_name, runtime_variable_name, series_names
 from ..exceptions import SimulationError
 from ..schemas import ModelDocument, SimulationParameters, SimulationResult
 from ..validation import ensure_valid_model
@@ -53,6 +53,17 @@ def make_time_grid(document: ModelDocument, parameters: SimulationParameters) ->
     return TimeGrid(initial, final, step, saveper, times)
 
 
+def _pysd_element_value(value, indexers: dict[str, str]) -> float:
+    if hasattr(value, "dims"):
+        expanded = {
+            **indexers,
+            **{f"{name}!": element for name, element in indexers.items() if f"{name}!" in value.dims},
+        }
+        if expanded:
+            value = value.sel(expanded)
+    return float(value.item() if hasattr(value, "item") else value)
+
+
 def _run_pysd(
     document: ModelDocument,
     parameters: SimulationParameters,
@@ -60,11 +71,7 @@ def _run_pysd(
 ) -> EngineOutput:
     with tempfile.TemporaryDirectory(prefix="sdcloud_pysd_") as temporary:
         model = load_pysd_model(document, Path(temporary))
-        names = {
-            item.id: (label if label.isascii() and label.isidentifier() else f'"{label}"')
-            for item in document.variables
-            for label in [item.label or item.id]
-        }
+        names = {item.id: runtime_variable_name(item) for item in document.variables}
         stock_names = {item.id for item in document.variables if item.kind == "stock"}
         constant_names = {item.id for item in document.variables if item.kind == "constant"}
         component_params = {
@@ -85,6 +92,7 @@ def _run_pysd(
                     [point[1] for point in series.points],
                     index=[point[0] for point in series.points],
                 )
+        has_subscripts = any(item.subscripts for item in document.variables)
         frame = model.run(
             params=component_params or None,
             initial_condition=(grid.initial_time, initial_values),
@@ -92,7 +100,8 @@ def _run_pysd(
             time_step=grid.time_step,
             saveper=grid.time_step,
             return_timestamps=grid.output_times,
-            return_columns=[names[item.id] for item in document.variables],
+            return_columns=[runtime_name(item.label or item.id) for item in document.variables],
+            flatten_output=not has_subscripts,
         )
         docs = model.doc.to_dict("records")
         real_by_python = {row["Py Name"]: row["Real Name"] for row in docs}
@@ -105,20 +114,19 @@ def _run_pysd(
             output["time"] = grid.output_times.copy()
         dimensions = {item.id: item.elements for item in document.dimensions}
         for variable in document.variables:
-            label = names[variable.id]
+            label = runtime_name(variable.label or variable.id)
+            if label not in columns:
+                raise SimulationError(f"PySD did not return variable {variable.id}")
+            series = frame[columns[label]]
             if not variable.subscripts:
-                if label not in columns:
-                    raise SimulationError(f"PySD did not return variable {variable.id}")
-                output[variable.id] = frame[columns[label]].astype(float).tolist()
+                output[variable.id] = series.astype(float).tolist()
                 continue
             for elements in itertools.product(*(dimensions[name] for name in variable.subscripts)):
                 suffix = ",".join(elements)
-                element_label = f"{label}[{suffix}]"
-                if element_label not in columns:
-                    raise SimulationError(f"PySD did not return variable {variable.id}[{suffix}]")
-                output[f"{variable.id}[{suffix}]"] = (
-                    frame[columns[element_label]].astype(float).tolist()
-                )
+                indexers = dict(zip(variable.subscripts, elements, strict=True))
+                output[f"{variable.id}[{suffix}]"] = [
+                    _pysd_element_value(value, indexers) for value in series
+                ]
         return EngineOutput(
             output["time"], {key: value for key, value in output.items() if key != "time"}, {}
         )
