@@ -98,6 +98,11 @@ def _run_pysd(
         real_by_python = {row["Py Name"]: row["Real Name"] for row in docs}
         columns = {real_by_python.get(str(column), str(column)): column for column in frame.columns}
         output = {"time": frame.index.astype(float).tolist()}
+        if len(output["time"]) == len(grid.output_times) and all(
+            math.isclose(actual, expected, rel_tol=0, abs_tol=5.1e-6)
+            for actual, expected in zip(output["time"], grid.output_times, strict=True)
+        ):
+            output["time"] = grid.output_times.copy()
         dimensions = {item.id: item.elements for item in document.dimensions}
         for variable in document.variables:
             label = names[variable.id]

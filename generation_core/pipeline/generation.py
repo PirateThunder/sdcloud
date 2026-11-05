@@ -11,13 +11,14 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .codegen import export_vensim, generate_python_code
-from .components import build_components, normalize_component_payload
+from .components import build_components, normalize_component_payload, normalize_inferred_time
 from .exceptions import LLMResponseError, ModelValidationError
 from .expression_parser import normalize_expression
 from .formats import export_xmile
 from .io import write_json_atomic, write_stage
 from .ir import dependencies, ref, walk
 from .llm import LLMClient
+from .ode_equivalence import apply_explicit_odes, validate_explicit_odes
 from .pattern_library import pattern_prompt, select_pattern
 from .prompts import (
     BRIEF_REPAIR_PROMPT,
@@ -1012,6 +1013,11 @@ async def generate_model(
     if pattern is None and request.base_model is None:
         def parse_components(response: Any) -> tuple[ComponentPlan, Any]:
             plan = ComponentPlan.model_validate(normalize_component_payload(response))
+            plan = apply_explicit_odes(plan, description)
+            if plan.time is not None:
+                plan = plan.model_copy(
+                    update={"time": normalize_inferred_time(plan.time, description)}
+                )
             if plan.components and plan.time is None:
                 raise ModelValidationError("component plan requires time settings")
             built = (
@@ -1019,6 +1025,8 @@ async def generate_model(
                 if plan.components
                 else None
             )
+            if built is not None:
+                validate_explicit_odes(description, built[0])
             return plan, built
 
         plan, component_result = await _call_stage(

@@ -1,6 +1,10 @@
 import pytest
 
-from pipeline.components import build_components, normalize_component_payload
+from pipeline.components import (
+    build_components,
+    normalize_component_payload,
+    normalize_inferred_time,
+)
 from pipeline.exceptions import ModelValidationError
 from pipeline.schemas import ComponentPlan, TimeSettings
 from pipeline.simulation import simulate_model
@@ -193,6 +197,49 @@ def test_output_sampling_respects_limit_without_changing_time_step():
     assert settings.final_time / settings.saveper < 10000
 
 
+def test_inferred_time_step_uses_the_nearest_smaller_horizon_divisor():
+    settings = normalize_inferred_time(
+        TimeSettings(unit="month", final_time=60, time_step=0.55, saveper=0.55),
+        "Use a 60 month horizon without a prescribed integration step.",
+    )
+    assert settings.time_step == pytest.approx(60 / 110)
+    assert settings.time_step <= 0.55
+    assert settings.saveper == settings.time_step
+    assert settings.final_time / settings.time_step == pytest.approx(110)
+
+
+def test_explicit_time_step_and_saveper_are_not_overridden():
+    settings = TimeSettings(unit="month", final_time=60, time_step=0.55, saveper=0.55)
+    normalized = normalize_inferred_time(
+        settings,
+        "Use time step 0.55 and saveper 0.55 for the 60 month horizon.",
+    )
+    assert normalized == settings
+    component = first_order()
+    component["time_unit"] = "month"
+    with pytest.raises(ModelValidationError, match="integer multiple"):
+        build_components([component], settings)
+
+
+def test_inferred_saveper_becomes_an_integer_multiple_of_time_step():
+    settings = normalize_inferred_time(
+        TimeSettings(unit="month", final_time=60, time_step=0.25, saveper=0.6),
+        "Use a 60 month horizon.",
+    )
+    assert settings.time_step == 0.25
+    assert settings.saveper == 0.5
+
+
+def test_repeating_time_step_preserves_canonical_grid_with_pysd():
+    from pipeline.schemas import SimulationParameters
+
+    model = document([first_order()], final_time=60, time_step=60 / 110)
+    result = simulate_model(model, SimulationParameters())
+    assert len(result.time) == 111
+    assert result.time[1] == pytest.approx(60 / 110, abs=1e-12)
+    assert result.time[-1] == 60
+
+
 def test_unused_ode_parameter_is_rejected_instead_of_being_ignored():
     components = spring_components()
     components[1]["parameters"] = [
@@ -238,6 +285,56 @@ def test_ode_additive_literal_gets_sibling_units_and_fitz_hugh_oscillates():
     literal = next(item for item in model.variables if item.id == "w_term_1_literal_1")
     assert literal.expression.value == 0.7
     assert literal.units == {"state": 1}
+    result = simulate_model(model, adaptive())
+    series = result.variables["v"]
+    changes = sum(left * right < 0 for left, right in zip(series, series[1:], strict=False))
+    assert changes >= 2
+
+
+def test_factored_ode_preserves_named_rate_offset_and_damping():
+    model = document(
+        [
+            {
+                "kind": "polynomial_ode",
+                "stock": "v",
+                "initial": 1,
+                "units": {"state": 1},
+                "time_unit": "second",
+                "terms": [
+                    {"coefficient": 1, "expression": "v", "sign": 1},
+                    {"coefficient": 1 / 3, "expression": "v^3", "sign": -1},
+                    {"coefficient": 1, "expression": "w", "sign": -1},
+                    {"coefficient": 0.8, "expression": "1", "sign": 1},
+                ],
+                "parameters": [],
+            },
+            {
+                "kind": "polynomial_ode",
+                "stock": "w",
+                "initial": 0,
+                "units": {"state": 1},
+                "time_unit": "second",
+                "terms": [
+                    {
+                        "coefficient": "recovery_rate",
+                        "expression": "v + recovery_offset - damping * w",
+                        "sign": 1,
+                    }
+                ],
+                "parameters": [
+                    {"id": "recovery_rate", "value": 0.1, "role": "rate", "units": None},
+                    {"id": "recovery_offset", "value": 0.6, "role": "threshold", "units": None},
+                    {"id": "damping", "value": 0.75, "role": "scale", "units": None},
+                ],
+            },
+        ],
+        final_time=100,
+        time_step=0.05,
+    )
+    variables = {item.id: item for item in model.variables}
+    assert variables["recovery_rate"].units == {"second": -1}
+    assert variables["recovery_offset"].units == {"state": 1}
+    assert variables["damping"].units == {}
     result = simulate_model(model, adaptive())
     series = result.variables["v"]
     changes = sum(left * right < 0 for left, right in zip(series, series[1:], strict=False))
@@ -332,3 +429,49 @@ def test_duplicate_delay_consumption_is_idempotent():
 
     result = simulate_model(model, SimulationParameters(integration_method="euler"))
     assert result.variables["parts"][-1] > 10
+
+
+def delay_with_additional_outflow(time_constant):
+    return [
+        {
+            "kind": "delay",
+            "stock": "parts",
+            "inflow": "transport",
+            "outflow": "consumption",
+            "input_rate": 10,
+            "delay_time": 4,
+            "initial_stock": 0,
+            "initial_delayed_rate": 0,
+            "stock_units": {"item": 1},
+            "time_unit": "second",
+            "consumption_time": 2,
+            "input_rate_after": 20,
+            "rate_change_time": 5,
+        },
+        {
+            "kind": "first_order",
+            "source": "parts",
+            "target": "cloud:recycling_sink",
+            "flow": "recycling",
+            "time_constant": time_constant,
+            "initial_source": 0,
+            "initial_target": 0,
+            "source_units": {"item": 1},
+            "target_units": None,
+            "time_unit": "second",
+        },
+    ]
+
+
+def test_duplicate_delay_consumption_is_rejected():
+    with pytest.raises(ModelValidationError, match="duplicate delay consumption.*recycling"):
+        build_components(delay_with_additional_outflow(2), TimeSettings(unit="second"))
+
+
+def test_delay_allows_an_independent_outflow_with_a_different_rate():
+    model = document(delay_with_additional_outflow(5), final_time=20)
+    from pipeline.schemas import SimulationParameters
+
+    result = simulate_model(model, SimulationParameters(integration_method="euler"))
+    assert result.variables["parts"][-1] > 0
+    assert result.variables["recycling"][-1] > 0

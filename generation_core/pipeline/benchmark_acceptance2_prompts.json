@@ -1,0 +1,50 @@
+[
+  {
+    "id": "accept2_nonlinear_actuator",
+    "description": "An electromechanical feedback system starts with u=2 and v=0. Use du/dt = v and dv/dt = 0.3*(1-u^2)*v - u. Both states have units `state`, model time has unit `time`, and the horizon is 100 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "u", "minimum": 2}
+  },
+  {
+    "id": "accept2_recovery_loop",
+    "description": "A coupled recovery process starts with p=1 and q=0. Use dp/dt = p - p^3/3 - q + 0.6 and dq/dt = 0.05*(p + 0.9 - 0.7*q). Both states have units `state`, model time has unit `time`, and the horizon is 120 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "p", "minimum": 2}
+  },
+  {
+    "id": "accept2_linear_control",
+    "description": "A feedback controller starts with s=2 and r=0. Use ds/dt = r and dr/dt = 0.3*(-16*s - 0.4*r). Both states have units `state`, model time has unit `time`, and the horizon is 50 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "s", "minimum": 6}
+  },
+  {
+    "id": "accept2_package_sorting",
+    "description": "A sorting station starts with packages=5. New packages arrive at 24 package/minute for the first 1 minute and then stop. Processing follows min(packages / service_time, max_service), with service_time=0.25 minute and max_service=10 package/minute. Packages must stay nonnegative. Use a 15 minute horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "packages", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "accept2_electrolyte_pulse",
+    "description": "A medical tank starts with electrolyte_mass=3 gram. A pump adds 8 gram/minute during the first 0.75 minute and then stops. Natural removal is first order with coefficient=0.25 minute^-1. Use a 15 minute horizon with gram and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "electrolyte_mass", "at": 0.75, "after": 15, "relation": "decrease"}
+  },
+  {
+    "id": "accept2_rail_delay",
+    "description": "A rail terminal receives containers through a third-order material response with transport_time=2 minute. The external container_rate is 0 container/minute until time=2 minute and 18 container/minute afterwards. The response starts empty with initial output rate=0 container/minute. Terminal consumption has time constant=4 minute and containers starts at 0 container. Use a 25 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "containers", "at": 1, "before_max": 0, "after_min": 8}
+  },
+  {
+    "id": "accept2_water_reserve",
+    "description": "A utility tank starts with water_reserve=800 litre. Consumption is 10 litre/second until time=3 second, then increases to 25 litre/second. Use a 20 second horizon and model one outflow to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "water_reserve", "at": 3, "after": 20, "relation": "below", "value": 600}
+  },
+  {
+    "id": "accept2_reagent_cascade",
+    "description": "A reaction vessel contains reagent_a=90 mole and reagent_b=0 mole. reagent_a transforms into reagent_b with coefficient=0.35 hour^-1, and reagent_b is removed with coefficient=0.06 hour^-1. No material is added. Use a 50 hour horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "reagent_b", "after": 2}
+  }
+]

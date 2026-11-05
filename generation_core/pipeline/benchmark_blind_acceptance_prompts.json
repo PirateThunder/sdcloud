@@ -1,0 +1,74 @@
+[
+  {
+    "id": "blind_sensor_offset",
+    "description": "A measurement channel has calibration_error=12 percent. It removes the error through first-order adaptation with coefficient=0.25 second^-1. There are no new disturbances. Model calibration_error and its elimination over a 40 second horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "analytic_exponential", "variable": "offset", "initial": 12, "rate": -0.25, "time": 40, "tolerance": 0.02}
+  },
+  {
+    "id": "blind_ink_dilution",
+    "description": "A mixing line contains concentrated_ink=80 gram and diluted_ink=0 gram. Concentrated ink becomes diluted ink with coefficient=0.3 minute^-1, and diluted ink is flushed away with coefficient=0.05 minute^-1. No ink is added. Use a 60 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "diluted", "after": 3}
+  },
+  {
+    "id": "blind_antibody_infusion",
+    "description": "A culture starts with antibody_mass=1 mg. A pump adds 6 mg/minute during the first 1.5 minute and then stops. Natural clearance is first order with coefficient=0.3 minute^-1. Use a 20 minute horizon with mg and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "antibody_mass", "at": 1.5, "after": 20, "relation": "decrease"}
+  },
+  {
+    "id": "blind_support_backlog",
+    "description": "A support team starts with tickets=10. New tickets arrive at 30 ticket/hour for the first 2 hour and then stop. Completion follows min(tickets / service_time, max_service), with service_time=0.1 hour and max_service=20 ticket/hour. Tickets must stay nonnegative. Use a 20 hour horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "tickets", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "blind_oxygen_reserve",
+    "description": "An emergency system has oxygen_reserve=500 litre. Consumption is 4 litre/second until time=8 second, then increases to 10 litre/second. Use a 40 second horizon and model one outflow to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "oxygen_reserve", "at": 8, "after": 40, "relation": "below", "value": 350}
+  },
+  {
+    "id": "blind_customs_delay",
+    "description": "A customs facility receives crates through a third-order material response with transport_time=3 minute. The external crate_rate is 0 crate/minute until time=4 minute and 15 crate/minute afterwards. The response starts empty with initial output rate=0 crate/minute. Facility consumption has time constant=2 minute and crates starts at 0 crate. Use a 30 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "crates", "at": 1, "before_max": 0, "after_min": 10}
+  },
+  {
+    "id": "blind_coupled_relaxation",
+    "description": "An abstract controller starts with x=1 and y=0. Use dx/dt = y and dy/dt = 0.4*(-9*x - 0.3*y). Both states have units `state`, model time has unit `time`, and the horizon is 60 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "x", "minimum": 4}
+  },
+  {
+    "id": "blind_forced_recovery",
+    "description": "A nonlinear controller starts with a=1 and b=0. Use da/dt = a - a^3/3 - b + 0.4 and db/dt = 0.12*(a + 0.5 - 0.6*b). Both states have units `state`, model time has unit `time`, and the horizon is 100 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "a", "minimum": 2}
+  },
+  {
+    "id": "blind_culture_growth",
+    "description": "A cell culture follows d(biomass)/dt = 0.25*biomass*(1 - biomass/300) - 0.05*biomass. Start with biomass=30 tonne and use an 80 year horizon. Keep tonne and year units consistent and represent 300 tonne as a named upper bound.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "monotonic", "variable": "biomass", "direction": "increasing"}
+  },
+  {
+    "id": "blind_zone_heating",
+    "description": "Two thermal storage zones exchange energy. hot_zone starts at 100 heat_unit and buffer_zone at 10 heat_unit. Energy moves from hot_zone to buffer_zone with coefficient=0.25 minute^-1, while buffer_zone loses energy to the environment with coefficient=0.05 minute^-1. There is no heater. Use a 60 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "buffer", "after": 3}
+  },
+  {
+    "id": "blind_account_withdrawal",
+    "description": "An account starts with balance=2000 dollar. Withdrawals are 50 dollar/day until time=5 day, then increase to 100 dollar/day. Use a 20 day horizon and model one outflow from the account to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "balance", "at": 5, "after": 20, "relation": "below", "value": 800}
+  },
+  {
+    "id": "blind_ferry_queue",
+    "description": "A ferry terminal starts with vehicles=8. Vehicles arrive continuously at 4 vehicle/minute. Boarding follows min(vehicles / service_time, max_service), with service_time=0.5 minute and max_service=10 vehicle/minute. Vehicles must stay nonnegative. Use a 30 minute horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "vehicles", "value": 2, "tolerance": 0.01, "nonnegative": true}
+  }
+]

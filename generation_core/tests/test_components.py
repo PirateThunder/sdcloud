@@ -441,6 +441,47 @@ async def test_invalid_typed_brief_uses_bounded_stage_repair():
     assert result.repair_attempts == 1
 
 
+async def test_duplicate_delay_consumption_uses_bounded_stage_repair():
+    delay = {
+        "kind": "delay",
+        "stock": "blanks",
+        "inflow": "transport",
+        "outflow": "consumption",
+        "input_rate": 10,
+        "delay_time": 4,
+        "initial_stock": 0,
+        "initial_delayed_rate": 0,
+        "stock_units": {"item": 1},
+        "time_unit": "second",
+        "consumption_time": 2,
+        "input_rate_after": 20,
+        "rate_change_time": 5,
+    }
+    duplicate = {
+        "kind": "first_order",
+        "source": "blanks",
+        "target": "cloud:extra",
+        "flow": "extra_transport",
+        "time_constant": 2,
+        "initial_source": 0,
+        "initial_target": 0,
+        "source_units": {"item": 1},
+        "target_units": None,
+        "time_unit": "second",
+    }
+    valid = {**component_plan(), "components": [delay]}
+    invalid = {**component_plan(), "components": [delay, duplicate]}
+    llm = ComponentLLM([invalid, valid])
+    result = await generate_model(
+        GenerationRequest(description="A custom first-order dynamic mechanism"),
+        llm,
+        max_repairs=1,
+    )
+    assert llm.calls == ["brief", "components", "components_repair_1"]
+    assert result.repair_attempts == 1
+    assert result.brief.components[0].kind == "delay"
+
+
 async def test_no_components_preserves_legacy_pipeline():
     class LegacyLLM(ComponentLLM):
         async def chat_json(self, prompt, *, stage, system=None, temperature=0.3, response_schema=None):

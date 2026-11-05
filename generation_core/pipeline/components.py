@@ -451,6 +451,11 @@ class _ComponentBuilder:
                             "Use a numeric coefficient preserving the product from the description, "
                             "or a separate coefficient with units=null."
                         )
+                        hint += (
+                            " If an outer coefficient multiplies a sum, keep that sum in one "
+                            "expression with named threshold/scale references instead of "
+                            "splitting it into incompatible terms."
+                        )
                         raise ModelValidationError(
                             f"coefficient {coefficient_id} has units {parameter.units}; "
                             f"equation requires {units}. {hint}"
@@ -649,6 +654,65 @@ def _merge_stocks(variables: list[SDVariable]) -> list[SDVariable]:
     return result
 
 
+def _duplicate_delay_consumption(delay: DelaySpec, transfer: FirstOrderSpec) -> bool:
+    if transfer.source != delay.stock:
+        return False
+    if transfer.flow == delay.outflow:
+        return True
+    if delay.consumption_time is None:
+        return False
+    if transfer.time_constant is not None:
+        return math.isclose(
+            transfer.time_constant, delay.consumption_time, rel_tol=1e-9, abs_tol=1e-12
+        )
+    return transfer.coefficient is not None and math.isclose(
+        transfer.coefficient,
+        1 / delay.consumption_time,
+        rel_tol=1e-9,
+        abs_tol=1e-12,
+    )
+
+
+def _validate_component_composition(components: list[ComponentSpec]) -> None:
+    delays = [item for item in components if isinstance(item, DelaySpec)]
+    transfers = [item for item in components if isinstance(item, FirstOrderSpec)]
+    for delay in delays:
+        for transfer in transfers:
+            if transfer.source == delay.outflow:
+                raise ModelValidationError(
+                    f"delay outflow {delay.outflow!r} cannot be reused as stock source "
+                    f"in first_order {transfer.flow!r}; keep one delay and its terminal stock"
+                )
+            if _duplicate_delay_consumption(delay, transfer):
+                raise ModelValidationError(
+                    f"duplicate delay consumption: first_order {transfer.flow!r} drains "
+                    f"{delay.stock!r} with the same flow or time constant; delay already "
+                    "includes third-order transport and consumption. Remove the duplicate "
+                    "first_order stage instead of adding another transport cascade."
+                )
+
+
+def normalize_inferred_time(settings: TimeSettings, description: str) -> TimeSettings:
+    duration = settings.final_time - settings.initial_time
+    step_is_explicit = re.search(
+        r"time[\s_-]*step|шаг\s+(?:интегрирования|времени|модели)", description, re.IGNORECASE
+    )
+    saveper_is_explicit = re.search(r"saveper", description, re.IGNORECASE)
+    steps = duration / settings.time_step
+    if step_is_explicit is None and not math.isclose(
+        steps, round(steps), rel_tol=1e-9, abs_tol=1e-9
+    ):
+        settings = settings.model_copy(update={"time_step": duration / math.ceil(steps)})
+    ratio = settings.saveper / settings.time_step
+    if saveper_is_explicit is None and not math.isclose(
+        ratio, round(ratio), rel_tol=1e-9, abs_tol=1e-9
+    ):
+        settings = settings.model_copy(
+            update={"saveper": settings.time_step * max(1, math.floor(ratio + 0.5))}
+        )
+    return settings
+
+
 def build_components(
     components: list[ComponentSpec],
     settings: TimeSettings | None = None,
@@ -658,6 +722,7 @@ def build_components(
         raise ModelValidationError("at least one typed component is required")
     try:
         components = TypeAdapter(list[ComponentSpec]).validate_python(components)
+        _validate_component_composition(components)
         settings = settings or TimeSettings(unit=components[0].time_unit)
         mismatched = [item.kind for item in components if item.time_unit != settings.unit]
         if mismatched:

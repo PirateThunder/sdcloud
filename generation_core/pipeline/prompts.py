@@ -49,13 +49,15 @@ time constant. saveper должен быть целым кратным time_step
   target=cloud:sink. Не заменяй его двумя conditional_inflow с одинаковым stock.
 - delay: третье транспортное запаздывание input_rate с delay_time и явным initial_delayed_rate;
   consumption_time задаёт последующий first-order расход, либо null для нулевого расхода.
-  input_rate_after и rate_change_time задают изменение входа, иначе оба null. Укажи stock,
-  inflow, outflow, initial_stock, stock_units, time_unit.
+  input_rate и input_rate_after — только числа из описания, не symbolic ids; rate_change_time
+  задаёт изменение входа, иначе оба optional-поля null. Укажи stock, inflow, outflow,
+  initial_stock, stock_units, time_unit. Не добавляй scheduled_flow для входа delay.
 - polynomial_ode: stock с initial, units, time_unit, terms и parameters. Каждый term содержит
   coefficient (число или id parameter), expression БЕЗ coefficient и без общего знака,
   sign=1|-1 и name. Например -4*position — coefficient=4, expression="position", sign=-1.
   Сумма terms задаёт derivative, не включай её в expression. Ссылки на coefficient внутри
-  того же expression запрещены. Составляй несколько terms для суммы скорости.
+  того же expression запрещены. Составляй несколько terms только для суммы верхнего уровня;
+  сумму, умножаемую на общий coefficient, всегда сохраняй одним expression.
   parameters: id, value, role=rate|threshold|scale, units=null или base units. Для threshold
   без units builder возьмёт units текущего stock; scale без units — dimensionless; rate без
   units — 1/time, кроме coefficient, чьи units выводятся из stock/time - expression units.
@@ -133,10 +135,18 @@ polynomial_ode (logistic growth и loss):
 тоже можно null. Не сокращай выражение state*(driver-threshold) до state*driver: threshold
 является частью динамики. Числа и знаки в expression не дублируй coefficient/sign.
 Сохраняй КАЖДЫЙ численный множитель из уравнения: state^3/3 требует
-expression="state^3/3" или coefficient=1/3. Для outer_rate*(...-inner_rate*state)
-нужен coefficient=outer_rate*inner_rate для state либо coefficient=outer_rate с
-expression="inner_rate*state". Не создавай parameter, который не используется
-в coefficient или expression: builder отклонит такие декоративные параметры.
+expression="state^3/3" или coefficient=1/3. Если общий rate умножается на сумму, сохраняй
+факторизованную форму одним term, не раскрывай скобки и не распределяй rate между terms:
+{"coefficient": "outer_rate", "expression": "state + offset - damping * other_state",
+ "sign": 1, "name": "recovery"}
+с parameters outer_rate(role="rate", units=null), offset(role="threshold", units=null)
+и damping(role="scale", units=null). Подставь фактические ids, values, states и знаки из запроса.
+Не раскрывай такие скобки вообще. Если части одного parenthesized expression стали разными
+terms, объедини их обратно в один term с общим outer coefficient. Это требование сохранения
+семантики, а не только units: у inner coefficient нельзя терять outer multiplier. Перед возвратом
+проверь каждый outer*inner продукт по исходному уравнению. Запись coefficient=outer_rate*inner_rate
+не поддерживается: coefficient может быть только числом или id parameter. Не создавай parameter,
+который не используется в coefficient или expression: builder отклонит декоративные параметры.
 Не используй один named coefficient для слагаемых с разными units. Для additive constant
 предпочитай числовой coefficient и expression="1" либо отдельный coefficient с units=null;
 не переиспользуй rate из stock term, если additive constant требует stock/time.
@@ -363,6 +373,11 @@ op="call", числовые assumption.value или expressions для несу�
 не число и не формула. Значение нельзя переносить в rationale или assumptions
 вместо initial. Вызывай функции напрямую,
 например min(a, b), без обёртки call(...).
+Для ComponentPlan поля input_rate, input_rate_after, rate и другие numeric parameters
+должны быть JSON-числами из описания, а не symbolic variable ids. Delay уже включает
+входное расписание, delayed inflow и consumption: не добавляй scheduled_flow или first_order
+для тех же процессов. При duplicate ids удали дублирующий механизм вместо случайного
+переименования stocks и flows; source/target scheduled_flow должны быть stock или cloud:<id>.
 Если ответ оборван или повторяет assumptions, верни полный компактный JSON той же модели:
 одна assumption на переменную, непустое value, никаких повторяющихся блоков.
 """

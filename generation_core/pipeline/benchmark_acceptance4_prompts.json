@@ -1,0 +1,38 @@
+[
+  {
+    "id": "accept4_excitatory_balance",
+    "description": "An excitatory balance starts with r=1 and s=0. Use dr/dt = r - r^3/3 - s + 0.9 and ds/dt = 0.07*(r + 0.4 - 0.55*s). Both states have units `state`, model time has unit `time`, and the horizon is 120 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "r", "minimum": 2}
+  },
+  {
+    "id": "accept4_damped_actuator",
+    "description": "An abstract actuator starts with j=2 and l=0. Use dj/dt = l and dl/dt = 0.35*(-25*j - 0.5*l + 0.8). Both states have units `state`, model time has unit `time`, and the horizon is 60 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "j", "minimum": 2}
+  },
+  {
+    "id": "accept4_catalyst_infusion",
+    "description": "A reactor starts with catalyst_mass=2 gram. A pump adds 7 gram/minute during the first 1.25 minute and then stops. Natural removal is first order with coefficient=0.18 minute^-1. Use an 18 minute horizon with gram and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "catalyst_mass", "at": 1.25, "after": 18, "relation": "decrease"}
+  },
+  {
+    "id": "accept4_baggage_queue",
+    "description": "A baggage desk starts with bags=15. New bags arrive at 36 bag/minute for the first 2 minute and then stop. Processing follows min(bags / service_time, max_service), with service_time=0.25 minute and max_service=12 bag/minute. Bags must stay nonnegative. Use a 20 minute horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "bags", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "accept4_equipment_fund",
+    "description": "An equipment fund starts with funds=1500 dollar. Spending is 20 dollar/day until time=4 day, then increases to 45 dollar/day. Use a 24 day horizon and model one outflow to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "funds", "at": 4, "after": 24, "relation": "below", "value": 1000}
+  },
+  {
+    "id": "accept4_reagent_stages",
+    "description": "A sequential reactor contains reagent_c=60 mole and reagent_d=0 mole. reagent_c transforms into reagent_d with coefficient=0.22 month^-1, and reagent_d is removed with coefficient=0.04 month^-1. No material is added. Use a 60 month horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "reagent_d", "after": 3}
+  }
+]

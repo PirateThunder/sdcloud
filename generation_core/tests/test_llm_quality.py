@@ -426,6 +426,51 @@ def test_behavior_oracle_uses_only_unique_stock_name_matches():
     assert not passed
 
 
+def test_behavior_oracle_resolves_unique_embedded_stock_token():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(
+        time=[0, 1, 2],
+        variables={
+            "energy_in_hot_reservoir": [80, 70, 60],
+            "energy_in_warm_reservoir": [20, 30, 25],
+        },
+    )
+    stocks = {"energy_in_hot_reservoir", "energy_in_warm_reservoir"}
+    passed, metrics = _expected_behavior(
+        {"expected_behavior": {"kind": "cascade", "variable": "warm", "after": 1}},
+        result,
+        stocks,
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "energy_in_warm_reservoir"
+    passed, _ = _expected_behavior(
+        {"expected_behavior": {"kind": "cascade", "variable": "reservoir"}},
+        result,
+        stocks,
+    )
+    assert not passed
+
+
+def test_behavior_oracle_resolves_unique_case_insensitive_plural():
+    from types import SimpleNamespace
+
+    from pipeline.benchmark import _expected_behavior
+
+    result = SimpleNamespace(
+        time=[0, 1, 2], variables={"Novices": [70, 60, 50], "Mentors": [0, 20, 25]}
+    )
+    passed, metrics = _expected_behavior(
+        {"expected_behavior": {"kind": "cascade", "variable": "mentor", "after": 1}},
+        result,
+        {"Novices", "Mentors"},
+    )
+    assert passed
+    assert metrics["resolved_variable"] == "Mentors"
+
+
 def test_behavior_oracle_supports_simple_plural_stock_name():
     from types import SimpleNamespace
 

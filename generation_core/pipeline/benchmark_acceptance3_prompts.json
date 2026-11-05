@@ -1,0 +1,50 @@
+[
+  {
+    "id": "accept3_membrane_recovery",
+    "description": "A synthetic membrane process starts with m=1 and n=0. Use dm/dt = m - m^3/3 - n + 0.7 and dn/dt = 0.06*(m + 0.8 - 0.65*n). Both states have units `state`, model time has unit `time`, and the horizon is 120 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "m", "minimum": 2}
+  },
+  {
+    "id": "accept3_nonlinear_suspension",
+    "description": "A nonlinear suspension starts with q=2 and z=0. Use dq/dt = z and dz/dt = 0.25*(1-q^2)*z - q. Both states have units `state`, model time has unit `time`, and the horizon is 100 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "q", "minimum": 2}
+  },
+  {
+    "id": "accept3_forced_spring",
+    "description": "An abstract forced mechanism starts with h=2 and k=0. Use dh/dt = k and dk/dt = 0.5*(-4*h - 0.2*k + 0.6). Both states have units `state`, model time has unit `time`, and the horizon is 80 time units. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "h", "minimum": 2}
+  },
+  {
+    "id": "accept3_enzyme_infusion",
+    "description": "A laboratory tank starts with enzyme_mass=0.5 gram. A pump adds 5 gram/minute during the first 2.5 minute and then stops. Natural removal is first order with coefficient=0.15 minute^-1. Use a 25 minute horizon with gram and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "enzyme_mass", "at": 2.5, "after": 25, "relation": "decrease"}
+  },
+  {
+    "id": "accept3_call_center",
+    "description": "A call center starts with calls=12. New calls arrive at 45 call/minute for the first 1.5 minute and then stop. Completion follows min(calls / service_time, max_service), with service_time=0.2 minute and max_service=15 call/minute. Calls must stay nonnegative. Use a 20 minute horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "calls", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "accept3_luggage_delay",
+    "description": "An airport receives luggage through a third-order material response with transport_time=2.5 minute. The external luggage_rate is 0 item/minute until time=3 minute and 14 item/minute afterwards. The response starts empty with initial output rate=0 item/minute. Terminal consumption has time constant=2.5 minute and luggage starts at 0 item. Use a 25 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "luggage", "at": 1, "before_max": 0, "after_min": 8}
+  },
+  {
+    "id": "accept3_irrigation_budget",
+    "description": "An irrigation reservoir starts with water=1200 gallon. Consumption is 12 gallon/day until time=6 day, then increases to 30 gallon/day. Use a 25 day horizon and model one outflow to an external sink.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "water", "at": 6, "after": 25, "relation": "below", "value": 900}
+  },
+  {
+    "id": "accept3_mentoring_cascade",
+    "description": "A laboratory has novice=70 person and mentor=0 person. Novices become mentors with coefficient=0.18 week^-1, and mentors leave with coefficient=0.03 week^-1. No new novices arrive. Use a 70 week horizon and person and week units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "mentor", "after": 4}
+  }
+]

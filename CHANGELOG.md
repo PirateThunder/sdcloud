@@ -9,6 +9,51 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.4.0 — 2026-11-05
+
+Семантика explicit ODE и независимая проверка обобщения.
+
+- **Explicit ODE builder**: для распознанных `dX/dt = …` уравнений безопасный AST parser
+  сам отделяет только верхнеуровневые слагаемые и внешние коэффициенты, не раскрывая скобки.
+  LLM больше не может потерять outer multiplier, заменить `/3` на `3` или добавить декоративные
+  parameters при переписывании явной формулы. Named parameters сохраняются только при реальном
+  использовании. Дополнительная numerical equivalence probe сравнивает исходный RHS и собранную
+  derivative на четырёх наборах значений через AST evaluator без `eval`; это не символьное доказательство,
+  а консервативная проверка поддерживаемых выражений.
+- **Prompt и repair**: факторизованная сумма остаётся одним term, delay numeric fields не принимают
+  symbolic ids, а duplicate mechanisms не склеиваются автоматически с угадыванием топологии.
+- **Missing-state восстановление**: непустой ComponentPlan обязан содержать все explicit ODE stocks,
+  а state IDs не могут маскироваться под parameters. Если stock, initial и общие units однозначно
+  заданы, builder восстанавливает пропущенный state из исходного описания вместо возврата
+  статической модели; неоднозначные случаи отклоняются.
+- **Component composition**: duplicate delay consumption с тем же flow или эквивалентной time
+  constant отклоняется и направляется в repair. Независимый outflow с другой скоростью разрешён,
+  существующие idempotent delay adapters сохранены.
+- **Time settings**: непериодические inferred `time_step`/`saveper` нормализуются в divisor
+  горизонта и кратный saveper. Явно заданные пользователем значения не перезаписываются.
+  PySD labels с engine rounding до пяти знаков восстанавливаются в каноническую сетку только
+  при совпадении длины и ошибке ≤ 5,1e-6; строгая output-grid проверка сохраняется.
+- **Behavior evaluation**: stock ID с ожидаемым именем как отдельным token внутри составного ID
+  разрешается только при единственном совпадении, например `warm` → `energy_in_warm_reservoir`.
+  Сопоставление и простое plural resolution не зависят от регистра (`mentor` → `Mentors`).
+- **Проверки**: 218 core, 20 backend и 12 frontend tests, 2/2 browser E2E; Ruff, Biome,
+  TypeScript, lock-проверки и production frontend build зелёные. Acceptance2 до deterministic builder дал 83,33% по всем метрикам;
+  после него тот же regression corpus достиг 100% executable/semantic/behavior (24/24), average
+  6,948 с. Первый unseen blind 12×3 до deterministic builder дал 100% executable/semantic и 94,44%
+  behavior; его regression после builder — 100% по всем метрикам (36/36). Acceptance3 regression
+  достиг 100% executable/semantic и 95,83% behavior после missing-stock и casefold fixes.
+  Эти наборы после анализа используются как regression, а не как новый independent proof.
+  Live-прогоны выполнены через OpenRouter 30B без GPU.
+- **Новый independent acceptance4**: `out/benchmark-openrouter-acceptance4-6x3-v1-deterministic.json`
+  с шестью ранее не использованными описаниями × 3 достиг 100% executable/semantic/behavior
+  (18/18) и 100% graph consistency при repair rate 27,78%, average 7,402 с. Pipeline hash —
+  `0f5d29668df9e9bc10deeac4b877fc93798ee9a57c32243543e08cdd95d00374`.
+- **Composition и time-grid acceptance**: после conservative delay validation, missing-stock
+  restoration и engine label normalization acceptance3 v6 и acceptance4 v5 достигли 100%
+  executable/semantic/behavior/graph (24/24 и 18/18), pipeline `cff52f49177a0fa4a68470a8ac9eeadf8bd7c1b52c4c9604f32ab17c8b7a10ef`.
+  Acceptance2 v6 достиг 95,83% по всем метрикам (23/24); единственный malformed brief
+  (массив вместо ModelBrief) был отклонён после bounded repair. Продуктовый E2E — 2/2.
+
 ## 0.3.0 — 2026-11-05
 
 Typed component generation и независимая проверка обобщения.

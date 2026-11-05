@@ -157,12 +157,15 @@ def _expected_behavior(
             aliases = [*aliases, *stock_ids]
         expected_name = expected.get("variable")
         if expected_name and expected_name not in result.variables:
+            folded_name = expected_name.casefold()
             candidates = {
                 name
                 for name in (stock_ids if stock_ids is not None else result.variables)
-                if name == f"{expected_name}s"
-                or name.startswith(f"{expected_name}_")
-                or name.endswith(f"_{expected_name}")
+                if name.casefold() == folded_name
+                or name.casefold() == f"{folded_name}s"
+                or name.casefold().startswith(f"{folded_name}_")
+                or name.casefold().endswith(f"_{folded_name}")
+                or f"_{folded_name}_" in name.casefold()
             }
             if len(candidates) == 1:
                 aliases = [*aliases, *candidates]

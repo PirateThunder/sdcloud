@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.3.0**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.4.0**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -21,6 +21,10 @@ backend и не зависит от frontend.
 - Шесть typed mechanisms: `first_order`, `conditional_inflow`, `queue`, `scheduled_flow`,
   `delay` и `polynomial_ode`. Builder выводит units коэффициентов, объединяет повторные
   stocks каскада только при совпадении initial/units и отклоняет неиспользуемые ODE parameters.
+- Для явных `dX/dt = …` deterministic AST builder сохраняет исходные коэффициенты и
+  факторизованную форму без LLM-переписывания. Numerical equivalence probe проверяет
+  поддерживаемые выражения на нескольких наборах значений без `eval`; неоднозначный текст
+  пропускается без угадывания.
 - 16 validated pattern templates и smoke-симуляция готовой модели.
 - Канонические SI и составные units, безопасная нормализация unquoted numeric arithmetic
   через DSL без `eval`, behavioral oracles и independent corpus из 14 предметных областей.
