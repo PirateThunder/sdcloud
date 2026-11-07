@@ -14,6 +14,7 @@ from .ir import binary, call, dependencies, lit, ref, time, unary
 from .legacy import flow_sign
 from .naming import identifier
 from .schemas import (
+    ArrayExpression,
     CompareExpression,
     Expression,
     IndexedExpression,
@@ -194,6 +195,8 @@ class ExpressionParser:
             or self.names.get(name.replace("_", " "))
             or self.names.get(name.replace(" ", "_"))
         )
+        if variable is None and any(name in dimensions for dimensions in self.subscripts.values()):
+            return name
         if variable is None:
             raise ModelValidationError(f"unknown variable in imported expression: {name}")
         return variable
@@ -204,14 +207,36 @@ class ExpressionParser:
         indices = {}
         while True:
             parts = []
-            while self.tokens[self.position].kind == "name":
+            while self.tokens[self.position].kind in {"name", "number"}:
                 parts.append(self.tokens[self.position].value)
                 self.position += 1
             if not parts:
                 raise ModelValidationError("empty or invalid subscript index")
             value = " ".join(parts)
-            if value in dimensions:
-                dimension = value
+            normalized = identifier(value, set())
+            available_dimensions = {
+                item for candidates in self.element_dimensions.values() for item in candidates
+            }
+            if normalized in dimensions:
+                dimension = normalized
+                element = "*"
+            elif normalized in available_dimensions:
+                source_elements = {
+                    element
+                    for element, candidates in self.element_dimensions.items()
+                    if normalized in candidates
+                }
+                candidates = [
+                    item
+                    for item in dimensions
+                    if source_elements
+                    <= {
+                        element
+                        for element, names in self.element_dimensions.items()
+                        if item in names
+                    }
+                ]
+                dimension = candidates[0] if len(candidates) == 1 else None
                 element = "*"
             else:
                 candidates = self.element_dimensions.get(value, [])
@@ -226,7 +251,11 @@ class ExpressionParser:
             indices[dimension] = element
             if self.tokens[self.position].value == "]":
                 self.position += 1
-                return IndexedExpression(op="index", name=variable, indices=indices)
+                return IndexedExpression(
+                    op="index",
+                    name=variable,
+                    indices={name: indices[name] for name in dimensions},
+                )
             if self.tokens[self.position].value != ",":
                 raise ModelValidationError("unclosed subscript expression")
             self.position += 1
@@ -253,12 +282,20 @@ def _stock_derivative(
     return result
 
 
+def _derivative_sign(expression: Expression, flow_id: str) -> int:
+    if isinstance(expression, ArrayExpression):
+        signs = {flow_sign(value, flow_id) for value in expression.values}
+        nonzero = signs - {0}
+        return nonzero.pop() if len(nonzero) == 1 else 0
+    return flow_sign(expression, flow_id)
+
+
 def _infer_topology(variables: list[dict]) -> None:
     for flow in (item for item in variables if item["kind"] == "flow"):
         positive = []
         negative = []
         for stock in (item for item in variables if item["kind"] == "stock"):
-            sign = flow_sign(stock["derivative"], flow["id"])
+            sign = _derivative_sign(stock["derivative"], flow["id"])
             if sign > 0:
                 positive.append(stock["id"])
             elif sign < 0:
@@ -342,6 +379,9 @@ def _normalize_inline_metadata(source: str) -> str:
 def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocument:
     body = source.split("\\\\\\---/// Sketch information", 1)[0].replace("{UTF-8}", "")
     body = _normalize_inline_metadata(body)
+    from .vensim_macros import expand_vensim_macros
+
+    body = expand_vensim_macros(body)
     body = re.sub(
         r"(?ms)^[ \t]*\*{3,}[ \t]*\r?\n[ \t]*\.Control[ \t]*\r?\n"
         r"[ \t]*\*{3,}~.*?^[ \t]*\|[ \t]*$",
@@ -360,7 +400,7 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
     raw = []
     controls = {}
     for match in record.finditer(body):
-        label = _clean_label(match.group("lhs"))
+        label = re.sub(r"\\\s*\n\s*", " ", _clean_label(match.group("lhs")))
         rhs = re.sub(r"\\\s*\n\s*", " ", match.group("rhs")).strip()
         if not label or not rhs:
             continue
@@ -378,8 +418,6 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
         )
     if not raw:
         raise ModelValidationError("Vensim model contains no equations")
-    if any(":EXCEPT:" in item["label"].upper() for item in raw):
-        raise ModelValidationError("Vensim :EXCEPT: assignments are not supported by this importer")
     if any("[" in item["label"] for item in raw):
         from .vensim_subscripts import import_subscripted
 
@@ -390,6 +428,8 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
     for label in sorted(labels):
         names[label] = identifier(label, used)
         used.add(names[label])
+    from .vensim_subscripts import _import_units
+
     variables = []
     flows = set()
     for item in raw:
@@ -398,7 +438,7 @@ def import_vensim(source: str, *, source_name: str = "model.mdl") -> ModelDocume
             "id": names[item["label"]],
             "label": item["label"],
             "description": item["description"] or None,
-            "units": parse_units(item["units"]),
+            "units": _import_units(item["units"]),
             "units_raw": item["units"] or None,
         }
         if expression.op == "call" and expression.name == "integ":

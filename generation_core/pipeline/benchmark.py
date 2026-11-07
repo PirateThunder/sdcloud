@@ -7,9 +7,10 @@ import math
 import time
 from pathlib import Path
 
+from .direct import generate_direct_model
 from .generation import generate_model
 from .io import write_json_atomic
-from .llm import LLMClient
+from .llm import LLMClient, use_inference_seed
 from .naming import identifier
 from .schemas import GenerationRequest, SimulationParameters
 from .semantics import semantic_issues
@@ -241,9 +242,16 @@ async def run_benchmark(
     artifacts_dir: Path | None = None,
     max_repairs: int = 2,
     concurrency: int = 1,
+    generation_mode: str = "full",
+    corpus_role: str = "regression",
 ) -> dict:
     if not 1 <= concurrency <= 8:
         raise ValueError("concurrency must be between 1 and 8")
+    if generation_mode not in {"direct", "typed_no_repair", "full"}:
+        raise ValueError(f"unknown generation mode: {generation_mode}")
+    if corpus_role not in {"development", "regression", "blind"}:
+        raise ValueError(f"unknown corpus role: {corpus_role}")
+    repair_budget = max_repairs if generation_mode == "full" else 0
     corpus_path = prompts_path or PROMPTS_PATH
     prompts = load_prompts(corpus_path)
     source_hash = hashlib.sha256()
@@ -281,6 +289,8 @@ async def run_benchmark(
                 "topology_pass": False,
                 "graph_pass": False,
                 "repair_attempts": 0,
+                "expected_outcome": "error" if prompt.get("expected_error") else "model",
+                "outcome_pass": False,
             }
             if workdir is not None:
                 workdir.mkdir(parents=True, exist_ok=True)
@@ -288,13 +298,24 @@ async def run_benchmark(
                     path.unlink()
                 write_json_atomic(workdir / "prompt.json", prompt)
                 case["artifacts"] = str(workdir)
+            case["generation_mode"] = generation_mode
+            base_seed = getattr(llm, "seed", None)
+            case["inference_seed"] = base_seed + run if base_seed is not None else None
             try:
-                document = await generate_model(
-                    GenerationRequest(description=prompt["description"]),
-                    llm,
-                    workdir=workdir,
-                    max_repairs=max_repairs,
+                request = GenerationRequest(
+                    description=prompt["description"],
+                    assumption_policy=prompt.get("assumption_policy", "allow_inferred"),
                 )
+                with use_inference_seed(case["inference_seed"]):
+                    if generation_mode == "direct":
+                        document = await generate_direct_model(request, llm, workdir=workdir)
+                    else:
+                        document = await generate_model(
+                            request,
+                            llm,
+                            workdir=workdir,
+                            max_repairs=repair_budget,
+                        )
                 parameters = SimulationParameters(
                     initial_time=document.time.initial_time,
                     final_time=document.time.final_time,
@@ -329,9 +350,15 @@ async def run_benchmark(
                 case["graph_pass"] = (
                     document.cld_data.validation.valid and document.sfd_data.validation.valid
                 )
+                case["pattern_match"] = document.pattern_id == prompt["expected_pattern"]
+                semantic_document = document
+                if generation_mode == "direct":
+                    semantic_document = document.model_copy(
+                        update={"pattern_id": prompt["expected_pattern"]}
+                    )
                 case["semantic_pass"] = (
-                    document.pattern_id == prompt["expected_pattern"]
-                    and not semantic_issues(document)
+                    (generation_mode == "direct" or case["pattern_match"])
+                    and not semantic_issues(semantic_document)
                     and case["units_pass"]
                     and case["topology_pass"]
                     and case["graph_pass"]
@@ -344,11 +371,18 @@ async def run_benchmark(
                     and (case["dynamic"] or not _requires_dynamic(prompt))
                     and expected_pass
                 )
+                case["outcome_pass"] = case["behavior_pass"]
                 case["behavior_metrics"] = behavior_metrics
                 case["actual_pattern"] = document.pattern_id
             except Exception as exc:
                 case["repair_attempts"] = getattr(exc, "repair_attempts", 0)
                 case["error"] = str(exc)[:2000]
+                status_code = getattr(exc, "status_code", None)
+                case["infrastructure_error"] = status_code in {408, 409, 425, 429} or (
+                    isinstance(status_code, int) and status_code >= 500
+                )
+                if prompt.get("expected_error"):
+                    case["outcome_pass"] = prompt["expected_error"].casefold() in case["error"].casefold()
                 if workdir is not None:
                     write_json_atomic(
                         workdir / "error.json",
@@ -366,13 +400,21 @@ async def run_benchmark(
     return {
         "schema_version": "2.0",
         "kind": "llm_benchmark",
-        "max_repairs": max_repairs,
+        "generation_mode": generation_mode,
+        "corpus_role": corpus_role,
+        "max_repairs": repair_budget,
         "concurrency": concurrency,
         "corpus_sha256": hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
         "pipeline_sha256": source_hash.hexdigest(),
         "prompts": len(prompts),
         "runs_per_prompt": runs,
         "cases": total,
+        "outcome_rate": sum(case["outcome_pass"] for case in cases) / total,
+        "expected_error_cases": sum(case["expected_outcome"] == "error" for case in cases),
+        "model_cases": sum(case["expected_outcome"] == "model" for case in cases),
+        "infrastructure_error_cases": sum(
+            case.get("infrastructure_error", False) for case in cases
+        ),
         "executable_rate": sum(case["executable"] for case in cases) / total,
         "finite_rate": sum(case["finite"] for case in cases) / total,
         "full_horizon_rate": sum(case["full_horizon"] for case in cases) / total,

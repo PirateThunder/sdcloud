@@ -320,6 +320,40 @@ def test_allee_thresholds_keep_their_stock_units():
     assert all(left >= right - 1e-9 for left, right in zip(series, series[1:], strict=False))
 
 
+def self_decay_component():
+    return {
+        "kind": "polynomial_ode",
+        "stock": "terminal",
+        "initial": 0,
+        "units": {"item": 1},
+        "time_unit": "second",
+        "terms": [{"coefficient": 0.4, "expression": "terminal", "sign": -1}],
+        "parameters": [],
+    }
+
+
+def test_zero_stock_with_only_self_decay_is_rejected():
+    with pytest.raises(ModelValidationError, match="vacuous stock.*no inflow"):
+        build_components([self_decay_component()], TimeSettings(unit="second"))
+
+
+def test_zero_stock_with_zero_derivative_is_a_valid_equilibrium():
+    component = self_decay_component()
+    component["terms"] = [{"coefficient": 0, "expression": "terminal", "sign": 1}]
+    model = document([component], final_time=2)
+    result = simulate_model(model, adaptive())
+    assert set(result.variables["terminal"]) == {0}
+    assert result.time[-1] == 2
+
+
+def test_zero_stock_with_a_positive_term_is_allowed():
+    component = self_decay_component()
+    component["terms"].append({"coefficient": 0.4, "expression": "1", "sign": 1})
+    model = document([component], final_time=2)
+    result = simulate_model(model, adaptive())
+    assert result.variables["terminal"][-1] > 0
+
+
 def test_invalid_polynomial_coefficient_units_are_rejected():
     with pytest.raises(ModelValidationError, match="coefficient stiffness.*equation requires"):
         build_components(

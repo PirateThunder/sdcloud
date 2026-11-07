@@ -6,7 +6,11 @@ class EngineError(Exception):
 
 
 class LLMError(EngineError):
-    pass
+    def __init__(
+        self, detail: str, *, repair_attempts: int = 0, status_code: int | None = None
+    ) -> None:
+        super().__init__(detail, repair_attempts=repair_attempts)
+        self.status_code = status_code
 
 
 class LLMResponseError(LLMError):

@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,6 +49,11 @@ async def main() -> int:
             "status": "done",
             "generator_version": VERSION,
             "provider": args.provider,
+            "llm_routing": (
+                asdict(llm.last_decision)
+                if getattr(llm, "last_decision", None) is not None
+                else None
+            ),
             "model_hash": document.model_hash(),
             "validation": document.validation.model_dump(mode="json"),
             "created_at": datetime.now(UTC).isoformat(),

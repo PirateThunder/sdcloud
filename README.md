@@ -6,7 +6,7 @@ AI-ассистент для системной динамики: превращ
 calibration и экспорт в открытые форматы.
 
 Монорепозиторий состоит из независимого движка генерации, продуктового backend и
-браузерного интерфейса. Текущая версия — **0.5.0**, статус — локальная разработка,
+браузерного интерфейса. Текущая версия — **0.6.0**, статус — локальная разработка,
 не production release.
 
 ## Возможности
@@ -15,6 +15,9 @@ calibration и экспорт в открытые форматы.
 - Typed component builder для систем вне библиотеки archetypes: first-order переходы,
   условные и scheduled flows, очереди, задержки и полиномиальные ODE с выводом units.
 - Opt-in lexical RAG на проверенных ComponentPlan-примерах, без vector DB; по умолчанию выключен.
+- Controlled evaluation: direct baseline, typed pipeline без repair и полный pipeline;
+  парная статистика с учётом prompt clusters, blind expert export и Cohen's kappa.
+  Протокол и offline fixture описаны в [generation_core/README](generation_core/README.md).
 - Stocks, flows, auxiliaries, constants, typed AST, проверка units и топологии.
 - Контекстный чат: вопросы о модели, уточнения и изменения текущей версии.
 - CLD/SFD, поиск петель обратной связи и просмотр уравнений в LaTeX.
@@ -128,6 +131,23 @@ curl http://127.0.0.1:58312/ready
 сервера используйте `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` и при необходимости
 `LOCAL_LLM_API_KEY`. Подробности — в [generation_core/README](generation_core/README.md).
 
+### Динамический 8B/30B режим (opt-in)
+
+Для local provider можно включить `LLM_DYNAMIC_ROUTING=1`. Worker измеряет свободную VRAM
+через `nvidia-smi` при каждой новой генерации и выбирает 30B при достаточном запасе, иначе 8B.
+Настройки `LOCAL_LLM_LARGE_*`, `LOCAL_LLM_SMALL_*`, `LLM_LARGE_MIN_FREE_MIB` и
+`LLM_DYNAMIC_LOCAL_FALLBACK` описаны в `.env.example`. Модель не меняется посреди одной
+генерации: временный сбой provider повторяет весь request на другой модели, а ошибки JSON,
+схемы и семантики не маскируются fallback. Маршрут и причина попыток видны в manifest и
+`routing.json`; облачный fallback требует отдельного `LLM_DYNAMIC_CLOUD_FALLBACK=1`.
+
+`generation_core/docker-compose.local-llm-dynamic.yml` — необязательный пример двух endpoints.
+Он не является доказательством одновременного размещения на 24 GB: текущая 30B VL AWQ после
+инициализации занимает около 20,6 GiB, а попытка уменьшить её долю до 0,73 не оставила KV-cache.
+На RTX 5090 24 GB проверка выполнена последовательно; для одновременного режима нужны другие
+веса, больше VRAM или несколько GPU. 30B запускается через vLLM, а 8B Q4_K_M — через llama.cpp:
+vLLM 0.30.0 не поддерживает GGUF loader. Подробности и ограничения — в README движка.
+
 ## Порты
 
 Публикуемые порты привязаны к `127.0.0.1`.
@@ -206,13 +226,18 @@ SMTP, ограничить доступ к внутренним сервисам
   100% на новых описаниях. Универсальная стабильность не заявляется: отдельные LLM-ответы
   могут исчерпать bounded repair и быть отклонены вместо возврата некорректной модели.
 - Внешний SDXorg corpus зафиксирован отдельно от LLM metrics: 154 Vensim-файла,
-  148 с эталоном, **35 imported, 35 simulated, 34 matched**. Поддерживаются dimensions,
-  indexed references, per-element constants/auxiliaries и numeric multidimensional arrays.
-  Macros, `:EXCEPT:` и element-specific stock derivatives пока не поддерживаются.
-  Rössler остаётся numerical compatibility case с 52 точками возле нуля.
+  148 с эталоном, **63 imported, 63 simulated, 62 matched** при неизменных `rtol=1e-3`
+  и `atol=1e-5`. Поддерживаются dimensions, indexed references, numeric multidimensional
+  и partial arrays, element-specific stock derivatives, aliases/subranges, `:EXCEPT:` и
+  ограниченные expression/stock/local/nested macros. Rössler — отдельный numerical
+  compatibility case: эталонный Euler float32 совпадает во всех 9603 stock-точках;
+  обычный float64 имеет 52 точки возле нуля вне допуска. Основной solver не переключался.
 - Текущая локальная 30B на RTX 5090: acceptance2 — 95,83%, acceptance3 — 100% executable/semantic
   и 87,5% behavior, acceptance4 — 100% по всем метрикам. Пороги 90/85/85 выполнены;
   остаточные ошибки composition/topology не скрываются.
+- Qwen3-8B-Q4_K_M проверен на 70 cases: 72,86% executable/semantic и 71,43% behavior.
+  Целевые показатели не достигнуты, поэтому стабильная замена 30B не подтверждена.
+  14B и дополнительные live robustness/long-context отложены; vLLM после 8B остановлен.
 - Редактор CLD/SFD и автоматическая симуляция после каждой генерации не входят
   в текущую версию.
 

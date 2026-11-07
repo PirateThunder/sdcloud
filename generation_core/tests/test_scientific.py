@@ -381,3 +381,188 @@ SAVEPER=TIME STEP ~~|
     assert result.variables["expo[sub1]"][0] == 1
     assert result.variables["expo[sub2]"][0] == 0.25
     assert result.variables["expo[sub3]"][0] == -1
+
+
+def test_vensim_except_stock_uses_scalar_flows_and_wildcard_exceptions():
+    document = import_vensim("""{UTF-8}
+initial inventory[store,product]=100 ~~|
+inventory[store,product] :EXCEPT: [s2,p2]=
+    INTEG(receipts[store,product]-sales[store,product],initial inventory[store,product]) ~~|
+inventory[s2,p2]=INTEG(receipts[s2,p2]-sales[s2,p2]-special,initial inventory[s2,p2]) ~~|
+receipts[store,product]=1 ~~|
+sales[store,product]=0 ~~|
+special=0.1 ~~|
+store:(s1-s2) ~~|
+product:(p1-p2) ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["inventory[s1,p1]"] == [100, 101]
+    assert result.variables["inventory[s2,p2]"][-1] == pytest.approx(100.9)
+
+
+def test_vensim_except_merges_subsets_and_resolves_dimension_indices():
+    document = import_vensim("""{UTF-8}
+value[dim1,dim2] :EXCEPT: [dim1up,d1]=Time ~~|
+value[dim1up,dim2] :EXCEPT: [dim1up,d2]=-Time ~~|
+value[dim1up,d2]=2*Time ~~|
+factor[dim1]=dim1 ~~|
+scaled[dim1,dim2] :EXCEPT: [dim1up,d1]=factor[dim1] ~~|
+scaled[dim1up,dim2] :EXCEPT: [dim1up,d2]=factor[dim1up] ~~|
+scaled[dim1up,d2]=10*factor[dim1up] ~~|
+dim1:(sub1-sub4) ~~|
+dim1up:(sub1-sub2) ~~|
+dim2:(d1-d2) ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["value[sub1,d1]"][-1] == -1
+    assert result.variables["value[sub1,d2]"][-1] == 2
+    assert result.variables["value[sub4,d1]"][-1] == 1
+    assert result.variables["factor[sub4]"] == [4, 4]
+    assert result.variables["scaled[sub1,d2]"] == [10, 10]
+    assert result.variables["scaled[sub4,d2]"] == [4, 4]
+
+
+def test_vensim_subranges_aliases_and_explicit_element_projection():
+    document = import_vensim("""{UTF-8}
+REG:A,B ~~|
+ALL:X,Y,Z ~~|
+ALL MAP <-> ALL ~~|
+A ONLY:X,Z ~~|
+B ONLY:Y ~~|
+origin[REG,A ONLY,ALL MAP]=1 ~~|
+value[REG,A ONLY,ALL MAP] :EXCEPT: [B,A ONLY,ALL MAP]=origin[REG,A ONLY,ALL MAP] ~~|
+value[REG,B ONLY,ALL MAP]=2 ~~|
+value[B,A ONLY,ALL MAP]=3 ~~|
+sparse[REG,ALL,X] :EXCEPT: [B,ALL,X]=10 ~~|
+sparse[B,ALL,X]=20 ~~|
+sparse[REG,ALL,Z]=30 ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    value = next(item for item in document.variables if item.id == "value")
+    sparse = next(item for item in document.variables if item.id == "sparse")
+    assert value.subscripts == ["reg", "all", "all_map"]
+    assert result.variables["value[A,X,Y]"] == [1, 1]
+    assert result.variables["value[A,Y,X]"] == [2, 2]
+    assert result.variables["value[B,X,Y]"] == [3, 3]
+    assert result.variables["sparse[A,X,X]"] == [10, 10]
+    assert result.variables["sparse[B,X,X]"] == [20, 20]
+    assert result.variables["sparse[A,X,Z]"] == [30, 30]
+    assert "sparse[A,X,Y]" not in result.variables
+    assert next(
+        item for item in document.dimensions if item.id == sparse.subscripts[-1]
+    ).elements == ["X", "Z"]
+
+
+def test_vensim_rejects_overlapping_equations_with_different_values():
+    from pipeline.exceptions import ModelValidationError
+
+    with pytest.raises(ModelValidationError, match="ambiguous subscripted assignments"):
+        import_vensim("""{UTF-8}
+value[full]=1 ~~|
+value[subset]=2 ~~|
+full:(a1-a3) ~~|
+subset:(a1-a2) ~~|
+""")
+
+
+def test_vensim_numeric_arrays_and_element_specific_stock_derivatives():
+    document = import_vensim("""{UTF-8}
+rows:Entry 1,Entry 2,Entry 3 ~~|
+columns:Column 1,Column 2 ~~|
+initial values[rows,columns]=1,2;3,4;5,6; ~~|
+stock[rows,columns]=INTEG(flow[rows,columns],initial values[rows,columns]) ~~|
+flow[rows,columns]=rate[rows,columns] ~~|
+rate[rows,Column 1]=1,2,3 ~~|
+rate[rows,Column 2]=2 ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["stock[Entry 1,Column 1]"] == [1, 2]
+    assert result.variables["stock[Entry 3,Column 1]"] == [5, 8]
+    assert result.variables["stock[Entry 2,Column 2]"] == [4, 6]
+
+
+def test_vensim_array_projection_preserves_fixed_and_varying_indices():
+    document = import_vensim("""{UTF-8}
+rows:Entry 1,Entry 2,Entry 3 ~~|
+columns:Column 1,Column 2 ~~|
+values[rows,columns]=1,2;3,4;5,6; ~~|
+selected[rows]=values[rows,Column 2] ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["selected[Entry 1]"] == [2, 2]
+    assert result.variables["selected[Entry 2]"] == [4, 4]
+    assert result.variables["selected[Entry 3]"] == [6, 6]
+
+
+def test_vensim_macros_support_locals_nested_calls_and_stocks():
+    document = import_vensim("""{UTF-8}
+:MACRO: MULTIPLY(input,factor)
+MULTIPLY=input*intermediate ~~|
+intermediate=factor*3 ~~|
+:END OF MACRO:
+:MACRO: SIX TIMES(input)
+SIX TIMES=MULTIPLY(input,2) ~~|
+:END OF MACRO:
+:MACRO: ACCUMULATE(input,initial)
+ACCUMULATE=INTEG(input,initial) ~~|
+:END OF MACRO:
+output=SIX TIMES(5) ~~|
+level=ACCUMULATE(output,1.1) ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert result.variables["output"] == [30, 30]
+    assert result.variables["level"] == [1.1, 31.1]
+
+
+def test_vensim_rejects_recursive_macros():
+    from pipeline.exceptions import ModelValidationError
+
+    with pytest.raises(ModelValidationError, match="recursive or excessive"):
+        import_vensim("""{UTF-8}
+:MACRO: LOOP(input)
+LOOP=LOOP(input) ~~|
+:END OF MACRO:
+output=LOOP(1) ~~|
+""")
+
+
+def test_vensim_equivalent_dimensions_unify_only_independent_axes():
+    document = import_vensim("""{UTF-8}
+subset:Entry 1,Entry 2 ~~|
+dim1:Entry 1,Entry 2 ~~|
+stock[dim1]=INTEG(inflow[dim1],0) ~~|
+inflow[dim1]=rate[dim1] ~~|
+rate[dim1]=1,2 ~~|
+selected[subset]=stock[subset] ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+""")
+    result = simulate_model(document, SimulationParameters())
+    assert len(document.dimensions) == 1
+    assert result.variables["selected[Entry 2]"] == [0, 2]

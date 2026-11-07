@@ -11,6 +11,7 @@ from .ir import (
     walk,
     with_derivatives,
 )
+from .legacy import flow_sign
 from .schemas import (
     ArrayExpression,
     BinaryExpression,
@@ -158,10 +159,12 @@ class ModelValidator:
         nodes = list(walk(expression))
         if len(nodes) > 500:
             self.error("EXPRESSION_TOO_LARGE", path, "expression has more than 500 AST nodes")
+        dimension_ids = {item.id for item in self.document.dimensions}
         for node in nodes:
             if (
                 isinstance(node, ReferenceExpression | IndexedExpression)
                 and node.name not in self.variables
+                and node.name not in dimension_ids
             ):
                 self.error("UNKNOWN_REFERENCE", path, f"unknown variable reference: {node.name}")
             if isinstance(node, LookupExpression) and node.table not in self.tables:
@@ -295,6 +298,11 @@ class ModelValidator:
             return self._shape(expression.args[0], path) if expression.args else []
         return []
 
+    def _array_derivative_sign(self, expression: ArrayExpression, flow_id: str) -> int:
+        signs = {flow_sign(value, flow_id) for value in expression.values}
+        nonzero = signs - {0}
+        return nonzero.pop() if len(nonzero) == 1 else 0
+
     def _validate_stock(self, stock) -> None:
         path = f"variables.{stock.id}"
         initial_refs = {
@@ -326,7 +334,24 @@ class ModelValidator:
                 self.error(
                     "INVALID_FLOW", f"variables.{flow.id}", "flow source and target coincide"
                 )
-        if stock.derivative is not None:
+        if isinstance(stock.derivative, ArrayExpression):
+            for flow in self.document.variables:
+                if flow.kind != "flow":
+                    continue
+                expected_sign = (
+                    1
+                    if flow.target and flow.target.kind == "stock" and flow.target.id == stock.id
+                    else -1
+                    if flow.source and flow.source.kind == "stock" and flow.source.id == stock.id
+                    else 0
+                )
+                if expected_sign and self._array_derivative_sign(stock.derivative, flow.id) != expected_sign:
+                    self.error(
+                        "DERIVATIVE_TOPOLOGY_MISMATCH",
+                        f"{path}.derivative",
+                        "stock derivative does not match flow topology",
+                    )
+        elif stock.derivative is not None:
             expected = self._topology_derivative(stock.id)
             if expected is not None and stock.derivative != expected:
                 self.error(

@@ -1,6 +1,6 @@
 [project]
 name = "sdcloud-backend"
-version = "0.5.0"
+version = "0.6.0"
 description = "sdCloud product backend: OTP auth, conversations, models and simulations"
 requires-python = ">=3.13,<3.14"
 dependencies = [

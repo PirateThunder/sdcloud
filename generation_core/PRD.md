@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0 и structural/Vensim/RAG hardening 0.5.0 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
+**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0, structural/Vensim/RAG hardening 0.5.0 и controlled evaluation/dynamic routing 0.6.0 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -819,3 +819,76 @@ uv run ruff check .
 - PySD output читается через base variable names и `flatten_output=False`; subscripted DataArray разворачивается по elements, включая wildcard dimensions `dim!`. Runtime naming соответствует export. Reference timestamps с четырёхзначным округлением сопоставляются с фактическими grid points при abs tolerance 5,1e-5 без изменения `rtol/atol` значений.
 - SDXorg (`out/sdx-vensim-v14-timestamp.json`): 154 модели, 148 с эталоном, 35 imported, 35 simulated, 34 matched. До изменений было 16/16/15. Rössler сохраняет 52 failed points возле нуля; adaptive RK4/DOP853 расходится сильнее и не используется для маскировки численной несовместимости.
 - Полный offline suite: 231 core, 20 backend и 12 frontend tests; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. GPU использовался только для локальной 30B acceptance; импорт и SDXorg не требуют GPU.
+
+## 29. Extended Vensim interoperability и robustness (Unreleased)
+
+- `:EXCEPT:` поддерживает wildcard и несколько исключений. Alternative subscript lists объединяются по фактическим элементам, включая subset/superset, complementary subranges и aliases. Непокрытые или неоднозначные assignments отклоняются. Частичные диапазоны представляются явными IR dimensions без заполнения отсутствующих элементов фиктивными нулями.
+- Numeric multidimensional/partial arrays, element-specific stock derivatives и mixed fixed/wildcard indices раскрываются в scalar per-element equations; агрегаты `SUM/PROD/VMIN/VMAX` сохраняют wildcard semantics. Multiword numeric indices и equivalent dimensions обрабатываются; две одинаковые оси одной переменной не склеиваются.
+- `pipeline/vensim_macros.py` разворачивает expression/stock/local/nested macros до основного parser с идентификаторной подстановкой, ограничением глубины и размера. Рекурсия, circular locals и неверное число аргументов дают actionable errors.
+- Итоговый SDXorg (`out/sdx-vensim-v21-macros.json`): 154 модели, 148 с эталоном, **63 imported, 63 simulated, 62 matched** при `rtol=1e-3`, `atol=1e-5`. Все прежние совпадения сохранены. Это interoperability baseline, не LLM quality.
+- Rössler исследован без смены допусков: float64 Euler имеет 52 failed points среди 9603 stock-точек, float32 Euler — ноль failed points и max absolute error менее 5e-5. Подтверждена reference precision; глобальное изменение solver precision не вводилось.
+- Новый `benchmark_robustness_prompts.json` содержит 17 ранее не использованных cases, включая 5 expected rejections. Добавлены `outcome_pass`, `model_cases` и `expected_error_cases`; успешный expected-model outcome требует behavior pass, а не только executable JSON.
+- PDE и stochastic Wiener differential equations отклоняются до LLM-запроса с `UNSUPPORTED_CAPABILITY`; явные обратные `initial_time/final_time` отклоняются. Нулевой derivative не считается vacuous self-decay, поэтому zero equilibrium исполняется; настоящий vacuous self-decay по-прежнему отклоняется. Explicit shared `state` units имеют приоритет над физическими догадками LLM.
+- Полный offline suite после importer/macros и robustness fixes — 251 core test; Ruff и lockfile зелёные. Generic `time unit(s)` нормализуется в `time` без угадывания физических `minute/year`; строковые units компонентов и параметров нормализуются через strict units parser без принятия malformed типов.
+- 8B Q4_K_M evaluation на RTX 5090 завершён: acceptance2 — 70,83% по всем метрикам, acceptance3 — 79,17%, acceptance4 — 61,11%; composition — 100% executable/semantic и 75% behavior (backlog stock ушёл ниже нуля). Всего 51/70 executable и semantic, 50/70 behavior; repair rate 82,86%, average 64,683 с, pipeline `62695337cf3f49127909d0cb567fa98e95d37faf98c9df854ec169f851d37f91`. Targets 90/85/85 не достигнуты, стабильная замена 30B не подтверждена. Мониторинг зафиксировал пик 80 °C и 176,91 Вт, после остановки vLLM — 225 MiB. 14B и новые live robustness/long-context отложены по решению владельца; fine-tuning не запускается.
+
+## 30. Controlled ablation и independent evaluation framework (Unreleased)
+
+- Добавлены три режима `benchmark.py`: `direct`, `typed_no_repair`, `full`, а также `--mode ablation` для их последовательного запуска на одном LLM и одинаковых `prompt_id/run`. Direct получает полную модель одним JSON-ответом без ModelBrief, ComponentPlan, pattern library, RAG и repair. Typed_no_repair и full используют прежний production pipeline с нулевым и ограниченным repair-бюджетом соответственно.
+- Все варианты разделяют bounded AST, canonical normalization, units/topology validation, smoke simulation и exports. Это осознанный общий evaluation contract, а не выполнение произвольного LLM-кода. Direct не обязан воспроизвести внутренний `pattern_id`; эталонный pattern задаёт только semantic oracle после генерации. Артефакты рук разделены, существующий production API генерации не изменён.
+- `pipeline/evaluation_protocol.json` фиксирует primary metric, три парных сравнения, exact McNemar, prompt-cluster bootstrap, Holm correction, expert review и запрет подстройки под blind corpus. Отчёты содержат SHA-256 protocol/corpus/pipeline, model и LLM settings, protocol deviations и `corpus_role=development|regression|blind`. `LLM_SEED`/`LOCAL_LLM_SEED` передаётся в OpenAI-compatible request; статистический seed отделён.
+- `pipeline/evaluation.py` рассчитывает treatment-minus-baseline effect, exact McNemar p-value и 95% percentile cluster bootstrap с повторной выборкой целых prompt IDs. Holm correction применяется внутри каждой метрики для трёх сравнений. Несовпадающие corpus, pipeline, model, protocol, LLM settings или case pairs отклоняются.
+- Blind expert export содержит CSV/JSONL и model/simulation artifacts без pattern/brief/repair/validation/generation-log метаданных. Private answer key отделён. Реализованы Cohen's kappa и raw agreement до adjudication, `0/1/NA`, проверка behavior/semantic противоречий; no_model исключается по умолчанию из kappa, чтобы отказы не повышали согласованность.
+- `evaluate.py compare|export|agreement` повторяет анализ offline. `tests/fixtures/llm_ablation_responses.json` покрывает весь CLI без сети. Fixture-smoke подтверждён end-to-end, но независимые эксперты и adjudication ещё не выполнялись. Реальный frozen blind ablation выполнен: direct — 2,78%, typed_no_repair — 95,83% executable и 90,28% semantic/behavior, full — 97,22% executable и 90,28% semantic/behavior (24 prompts × 3). Full против direct: +94,44 п.п. executable и +87,5 п.п. semantic/behavior; full против typed_no_repair: +1,39 п.п. executable и 0 п.п. semantic/behavior, p=1,0. Экспортированы 216 annotation tasks и 141 model artifact; независимая разметка ещё требуется.
+- Полный offline suite после evaluation framework — **305 core, 20 backend и 12 frontend tests**; Ruff, Biome, TypeScript, lockfiles и production frontend build зелёные. CLI `ablation → compare → export` проверен end-to-end на fixture без GPU и сети. Time-unit matcher не принимает русское «часть» за «час»; словоформы часа различаются явно.
+
+## Этап: устойчивость генерации на OpenRouter 8B
+
+- Для ComponentPlan добавлен opt-in `LLM_COMPONENT_STRUCTURED_OUTPUT`; default сохраняет JSON-only для несовместимых providers. `OPENROUTER_PROVIDER_ORDER`, `allow_fallbacks` и `require_parameters` фиксируют endpoint без скрытой смены модели или провайдера. LLM settings, включая component schema и provider options, записываются в benchmark metadata.
+- Для явных ODE устранены stock/parameter shadowing и потеря последнего уравнения с финальной точкой или запятой на верхнем уровне. Selector использует границы слов и не подставляет archetype с несовместимым числом stocks. Numeric literal units выводятся из ограничений уравнения с консервативным fallback; `seconds`/`second` канонизируются через существующий unit alias registry.
+- Scheduled flows поддерживают signed net inflow, но не отрицательный однонаправленный outflow. Cloud/variable collisions устраняются без изменения topology. Полностью идентичные shared parameters объединяются, конфликтующие отклоняются.
+- Delay composition отклоняет disconnected terminal, vacuous zero-input buffers и прямой scheduled input в обход delay. Только полностью совпадающие scheduled inputs и аналитически эквивалентные polynomial terminal adapters нормализуются в один delay; несовпадающие процессы не удаляются.
+- Opt-in `LLM_PATTERN_SHORTCUT=1` использует любой validated archetype без LLM только если все числа описания принадлежат pattern и нет конфликта временных/физических единиц. Пользовательские числа отключают shortcut. Для Lorenz/Van der Pol/Duffing, SIRS и student club canonical flows/auxiliaries дополняются из pattern с сохранением initial/constants. Настройка по умолчанию выключена и записывается в `llm_settings`.
+- Inferred `time_step` ограничивается `delay_time/4` для сохранения third-order delay и `1/(50*r*max(1,r*T))` для self-decay с учётом накопленной ошибки Euler. Внутренние шаги ограничены 10000 на модель. Явный пользовательский `time_step` не перезаписывается. Redundant ODE parameters удаляются только при совпадении абсолютного значения с numeric coefficient, остальные unused отклоняются.
+- Qwen3-VL-8B baseline: 86,36% executable/semantic/behavior, далее повторяющиеся upstream 429 у единственного Parasail endpoint. Llama-3.1-8B: 36,36%/31,82% без component schema и 59,09%/54,55% со schema. Ministral-8B-2512 baseline: **90,91% executable/semantic и 86,36% behavior** на 22 development/regression cases. Эти результаты не смешиваются и не являются самостоятельным confirmatory доказательством.
+- `benchmark_8b_stress_prompts.json` содержит 28 development cases. Отдельный `benchmark_confirmatory_8b_v2_prompts.json` содержит 24 cases и заморожен SHA-256 `36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18`. Для него выполнен реальный ablation direct/typed_no_repair/full на Ministral с artifacts, blind expert export и protocol defaults. GPU и 14B не используются. Отчёт — `out/openrouter-ministral8b-ablation-v2.json`, annotations — `out/openrouter-ministral8b-annotations-v2/`.
+- Frozen regression на pipeline `a5fc3038a94ea8860b80363e3f3e4d190b4bec339312d74d01f5af5d0a7bb8ff`: acceptance2 — 100% по всем метрикам, acceptance3 — 79,17%, acceptance4 — 100%; сводно 61/66 = **92,42% executable/semantic/behavior**. Stress 28 и original 26 — **100% по всем метрикам**. Acceptance3 остаётся отдельным слабым местом, но цели по сводному corpus выполнены. Реальный blind ablation начат после этих проверок; его результаты не используются для подстройки.
+
+## 31. Dynamic local 8B/30B routing (Unreleased)
+
+- `LLM_DYNAMIC_ROUTING=1` включает opt-in `DynamicLLM` только для local/vLLM provider. Перед
+  каждой полной генерацией `NvidiaSMIMonitor` получает total/used/free MiB для выбранного GPU;
+  при `free >= LLM_LARGE_MIN_FREE_MIB` выбирается large target, иначе small. Для remote WSL
+  поддерживаются отдельные SSH target/port и явный путь к `nvidia-smi`; секреты и адрес ноутбука
+  не входят в репозиторий.
+- Выбранный client закрепляется на все стадии одной модели. При transport timeout, HTTP
+  408/409/425/429 или 5xx router повторяет всю операцию на другом local target, а не продолжает
+  сформированный brief/components другой моделью. HTTP 400, `LLMResponseError`, Pydantic и
+  `ModelValidationError` не считаются transient и не вызывают скрытую подмену. Cloud target
+  доступен только при `LLM_DYNAMIC_CLOUD_FALLBACK=1`; при недоступном VRAM без этого флага
+  возвращается ошибка конфигурации.
+- `generate.py` и `chat.py` добавляют `manifest.llm_routing`; `routing.json`, `generation_log`
+  и отдельные `attempt_<n>_<role>` workdirs сохраняют выбранную модель, VRAM и failed attempts.
+  Обычный `LLM_DYNAMIC_ROUTING=0` путь не получает новых обязательных env и сохраняет прежнее
+  поведение. Backend продолжает обращаться только к gen-api; routing остаётся внутри core.
+- Добавлены unit/integration tests для high/low VRAM, полного restart, transient classification,
+  запрета schema/semantic fallback, optional cloud, default-off и route в сохранённой chat-модели.
+  Полный core suite — **318 tests**, Ruff проходит. Compose overlay
+  `docker-compose.local-llm-dynamic.yml` не включён по умолчанию.
+- GPU limitation: на RTX 5090 Laptop 24 GB проверенная 30B VL AWQ требует около 20,6 GiB после
+  инициализации при max context 4096. Попытка `gpu_memory_utilization=0.73` отклонена vLLM с
+  `No available memory for the cache blocks`. Поэтому одновременное размещение этой 30B и 8B
+  GGUF не заявляется; реальные endpoint/generation проверки выполняются последовательно.
+  Для production dual mode нужны другие веса/больше VRAM/несколько GPU и отдельный profiling.
+- Реальный smoke на RTX 5090: 30B vLLM (max context 8192, memory utilization 0.88) завершил
+  dynamic generation за 232,599 с с failed small attempt и `validation=passed`; 8B Q4_K_M через
+  llama.cpp CUDA завершил dynamic generation за 44,806 с с failed large attempt и `validation=passed`.
+  Маршруты сохранены в `out/dynamic-large-route/manifest.json` и
+  `out/dynamic-small-route-v2/manifest.json`. vLLM 0.30.0 не поддерживает GGUF loader, поэтому
+  small runtime — llama.cpp, а не второй vLLM. Первая попытка small с max output 2048 была
+  отклонена как truncated; повтор с 4096 прошёл без изменения semantic checks. Per-target
+  `LOCAL_LLM_LARGE_MAX_TOKENS` и `LOCAL_LLM_SMALL_MAX_TOKENS` добавлены для dynamic mode.
+  Одновременное размещение на 24 GB по-прежнему не заявляется.
+  Отдельный high-VRAM smoke при `free=3540 MiB` и `threshold=3000 MiB` выбрал large напрямую,
+  получил `{"ok": true}` и `fallback=false`; это подтверждает реальный VRAM-based selection,
+  а не только mock-решение.

@@ -151,6 +151,13 @@ def _unit_name(value: str) -> str | None:
     return UNIT_ALIASES.get(normalized, normalized)
 
 
+def canonical_time_unit(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+    if normalized in {"time_unit", "time_units"}:
+        return "time"
+    return UNIT_ALIASES.get(normalized, normalized)
+
+
 def parse_units(value: str | None) -> dict[str, int] | None:
     if not value or not value.strip():
         return {} if value is not None and not value.strip() else None

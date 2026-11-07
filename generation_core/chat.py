@@ -3,6 +3,7 @@ import asyncio
 import os
 import sys
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -53,6 +54,11 @@ async def main() -> int:
             "response_kind": response.kind,
             "generator_version": VERSION,
             "provider": args.provider,
+            "llm_routing": (
+                asdict(llm.last_decision)
+                if getattr(llm, "last_decision", None) is not None
+                else None
+            ),
             "model_hash": response.model.model_hash() if response.model else None,
             "validation": response.model.validation.model_dump(mode="json")
             if response.model

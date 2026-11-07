@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "kind": "controlled_generation_evaluation",
+  "confirmatory_corpus_role": "blind",
+  "arms": ["direct", "typed_no_repair", "full"],
+  "pair_key": ["prompt_id", "run"],
+  "inference_seed": {
+    "base": 2026,
+    "run_offset": "zero-based run index",
+    "pairing": "Same prompt_id/run seed in every arm and model; base_seed + run_index"
+  },
+  "primary_metric": "behavior",
+  "secondary_metrics": ["executable", "semantic"],
+  "max_repairs": 2,
+  "alpha": 0.05,
+  "multiplicity": "Holm adjustment within each metric family across three arm comparisons",
+  "paired_test": "two-sided exact McNemar test on discordant cases",
+  "interval": {
+    "method": "percentile cluster bootstrap of the treatment-minus-baseline difference",
+    "cluster_unit": "prompt_id",
+    "samples": 10000,
+    "confidence_level": 0.95,
+    "seed": 2026
+  },
+  "expert_review": {
+    "experts": 2,
+    "independent": true,
+    "scores": ["0", "1", "NA"],
+    "metrics": ["semantic_score", "behavior_score"],
+    "agreement": "Cohen's kappa and raw agreement before adjudication",
+    "no_model": "Automatic failure; excluded from expert agreement by default",
+    "adjudication": "After independent scoring and agreement calculation"
+  },
+  "rules": [
+    "Freeze prompts, source, model, quantization and inference settings before blind runs.",
+    "Do not tune prompts, builders, validators or repair on the blind corpus.",
+    "Use identical prompt_id/run pairs and the same LLM for all three arms.",
+    "Treat repeated runs of one prompt as dependent observations.",
+    "Report failures and negative effects; do not redefine thresholds after seeing results.",
+    "Development and regression results are not independent confirmatory evidence."
+  ]
+}

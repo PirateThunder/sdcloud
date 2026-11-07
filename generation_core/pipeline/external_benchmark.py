@@ -59,12 +59,17 @@ def _compare(document, result, reference: dict, rtol: float, atol: float) -> dic
     compared_points = 0
     failed_points = 0
     comparable = [item for item in document.variables if item.kind == "stock"]
+    stocks_only = bool(comparable)
     if not comparable:
         comparable = [item for item in document.variables if item.kind in {"auxiliary", "constant"}]
     dimensions = {item.id: item.elements for item in document.dimensions}
     series = []
     for variable in comparable:
         label = _label(variable.label or variable.id)
+        if not stocks_only and not any(
+            name == label or name.startswith(f"{label}[") for name in reference
+        ):
+            continue
         if not variable.subscripts:
             series.append((label, result.variables[variable.id]))
             continue

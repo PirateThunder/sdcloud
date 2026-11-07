@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import math
 import re
 from pathlib import Path
 
@@ -26,10 +27,20 @@ _DIMENSION = re.compile(
     r"(?:\n[ \t]*~[ \t]*[^\n]*)?"
     r"(?:\n[ \t]*~[ \t]*(?P<comment>.*?)\|)?"
 )
+_DIMENSION_MAP = re.compile(
+    r"(?ms)^(?P<label>[A-Za-z_][A-Za-z0-9_ ]*)\s*<->\s*"
+    r"(?P<target>[A-Za-z_][A-Za-z0-9_ ]*)(?=\n[ \t]*~)"
+    r"(?:\n[ \t]*~[ \t]*[^\n]*)?"
+    r"(?:\n[ \t]*~[ \t]*(?P<comment>.*?)\|)?"
+)
 
 
 def remove_dimensions(body: str) -> str:
-    return _DIMENSION.sub("", body)
+    return _DIMENSION_MAP.sub("", _DIMENSION.sub("", body))
+
+
+def _import_units(value: str) -> dict[str, int] | None:
+    return None if value.strip().lower() in {"", "units"} else parse_units(value)
 
 
 def _elements(value: str) -> list[str]:
@@ -48,6 +59,9 @@ def _elements(value: str) -> list[str]:
 
 
 def extract_dimensions(body: str) -> tuple[list[Dimension], dict[str, list[str]]]:
+    from .formats import _normalize_inline_metadata
+
+    body = _normalize_inline_metadata(body)
     dimensions = []
     element_dimensions = {}
     used = set()
@@ -61,36 +75,74 @@ def extract_dimensions(body: str) -> tuple[list[Dimension], dict[str, list[str]]
         dimensions.append(Dimension(id=dimension_id, elements=elements))
         for element in elements:
             element_dimensions.setdefault(element, []).append(dimension_id)
+    by_label = {identifier(item.id, set()): item for item in dimensions}
+    for match in _DIMENSION_MAP.finditer(body):
+        target = by_label.get(identifier(match.group("target").strip(), set()))
+        if target is None:
+            raise ModelValidationError(
+                f"unknown dimension alias target: {match.group('target').strip()}"
+            )
+        alias_id = identifier(match.group("label").strip(), used)
+        used.add(alias_id)
+        dimensions.append(Dimension(id=alias_id, elements=target.elements))
+        for element in target.elements:
+            element_dimensions.setdefault(element, []).append(alias_id)
     return dimensions, element_dimensions
 
 
-def _label_details(
-    label: str, dimensions: dict[str, Dimension], element_dimensions: dict[str, list[str]]
-) -> tuple[str, list[str], dict[str, str]]:
-    base = label.split("[", 1)[0].strip()
-    if "[" not in label:
-        return base, [], {}
-    if not label.endswith("]"):
-        raise ModelValidationError(f"unclosed subscript in variable label: {label}")
+def _index_values(
+    values: list[str],
+    dimensions: dict[str, Dimension],
+    element_dimensions: dict[str, list[str]],
+    label: str,
+) -> tuple[list[str], dict[str, str]]:
     subscripts = []
     indices = {}
-    values = label.split("[", 1)[1][:-1].split(",")
     for raw in values:
         value = raw.strip()
-        if value in dimensions:
-            dimension = value
+        normalized = identifier(value, set())
+        if normalized in dimensions:
+            dimension = normalized
             element = "*"
         else:
             candidates = element_dimensions.get(value, [])
             dimension = candidates[0] if len(candidates) == 1 else None
             if dimension is None and len(candidates) > 1:
-                dimension = next((item for item in candidates if item not in indices), None)
+                unused = [item for item in candidates if item not in indices]
+                if unused:
+                    dimension = max(unused, key=lambda item: len(dimensions[item].elements))
             element = value
         if dimension is None or dimension in indices:
             raise ModelValidationError(f"invalid subscript {value} in {label}")
         subscripts.append(dimension)
         indices[dimension] = element
-    return base, subscripts, indices
+    return subscripts, indices
+
+
+def _label_details(
+    label: str, dimensions: dict[str, Dimension], element_dimensions: dict[str, list[str]]
+) -> tuple[str, list[str], dict[str, str], list[dict[str, str]]]:
+    exception_indices = []
+    if ":EXCEPT:" in label:
+        label, exception_source = label.split(":EXCEPT:", 1)
+        for values in re.findall(r"\[([^\]]+)\]", exception_source):
+            _, indices = _index_values(
+                values.split(","), dimensions, element_dimensions, label
+            )
+            exception_indices.append(indices)
+    label = label.strip()
+    base = label.split("[", 1)[0].strip()
+    if "[" not in label:
+        return base, [], {}, exception_indices
+    if not label.endswith("]"):
+        raise ModelValidationError(f"unclosed subscript in variable label: {label}")
+    subscripts, indices = _index_values(
+        label.split("[", 1)[1][:-1].split(","),
+        dimensions,
+        element_dimensions,
+        label,
+    )
+    return base, subscripts, indices, exception_indices
 
 
 def _numeric_array(source: str) -> ArrayExpression | None:
@@ -115,25 +167,173 @@ def _numeric_array(source: str) -> ArrayExpression | None:
     )
 
 
+def _merged_subscripts(records: list[dict], dimensions: dict[str, Dimension]) -> list[str]:
+    lists = [record["subscripts"] for record in records]
+    if len(lists) == 1:
+        return lists[0]
+    if not lists[0] or any(len(items) != len(lists[0]) for items in lists):
+        raise ModelValidationError("inconsistent subscripts in grouped variable assignments")
+    result = []
+    for axis in range(len(lists[0])):
+        candidates = list(dict.fromkeys(items[axis] for items in lists))
+        elements = {
+            element for name in candidates for element in dimensions[name].elements
+        }
+        containing = [
+            name
+            for name in dimensions
+            if len(dimensions[name].elements) == len(elements)
+            and elements == set(dimensions[name].elements)
+        ]
+        selected = next((name for name in candidates if name in containing), None)
+        if selected is None and containing:
+            selected = containing[0]
+        if selected is None:
+            raise ModelValidationError(
+                f"cannot unify subscript ranges on axis {axis + 1}: {candidates}"
+            )
+        result.append(selected)
+    for axis, selected in enumerate(result):
+        covered = []
+        for record in records:
+            local = record["subscripts"][axis]
+            index = record["indices"][local]
+            values = dimensions[local].elements if index == "*" else [index]
+            covered.extend(value for value in values if value not in covered)
+        if set(covered) == set(dimensions[selected].elements):
+            continue
+        if not set(covered) <= set(dimensions[selected].elements):
+            raise ModelValidationError(f"subscript range escapes its dimension on axis {axis + 1}")
+        elements = [value for value in dimensions[selected].elements if value in covered]
+        existing = next(
+            (name for name, dimension in dimensions.items() if dimension.elements == elements),
+            None,
+        )
+        if existing is None:
+            existing = identifier(f"{records[0]['id']}_subscript_{axis + 1}", set(dimensions))
+            dimensions[existing] = Dimension(id=existing, elements=elements)
+        result[axis] = existing
+    return result
+
+
+def _source_axis(
+    name: str, local: list[str], dimensions: dict[str, Dimension]
+) -> int:
+    axes = [index for index, candidate in enumerate(local) if candidate == name]
+    if not axes:
+        source_elements = set(dimensions[name].elements)
+        axes = [
+            index
+            for index, candidate in enumerate(local)
+            if source_elements <= set(dimensions[candidate].elements)
+        ]
+    if len(axes) != 1:
+        raise ModelValidationError(f"cannot map subscript {name} to grouped assignments")
+    return axes[0]
+
+
+def _mapped_indices(
+    indices: dict[str, str],
+    local: list[str],
+    merged: list[str],
+    dimensions: dict[str, Dimension],
+) -> dict[str, str]:
+    return {
+        merged[_source_axis(name, local, dimensions)]: element
+        for name, element in indices.items()
+    }
+
+
+def _exception_matches(
+    exception: dict[str, str],
+    record: dict,
+    merged: list[str],
+    elements: tuple[str, ...],
+    dimensions: dict[str, Dimension],
+) -> bool:
+    for axis, (_, element) in enumerate(zip(merged, elements, strict=True)):
+        source = next(
+            (
+                candidate
+                for candidate in exception
+                if _source_axis(candidate, record["subscripts"], dimensions) == axis
+            ),
+            None,
+        )
+        if (
+            source is None
+            or exception[source] not in {element, "*"}
+            or element not in dimensions[source].elements
+        ):
+            return False
+    return True
+
+
 def _merge_expressions(
     records: list[dict], field: str, dimensions: dict[str, Dimension]
 ) -> Expression:
     if len(records) == 1:
-        return records[0][field]
-    subscripts = records[0]["subscripts"]
-    if not subscripts or any(record["subscripts"] != subscripts for record in records):
-        raise ModelValidationError("inconsistent subscripts in grouped variable assignments")
-    if any(isinstance(record[field], ArrayExpression) for record in records):
-        raise ModelValidationError("nested subscripted array assignments are not supported")
+        record = records[0]
+        expression = record[field]
+        element_lists = [dimensions[name].elements for name in record["subscripts"]]
+        if (
+            record["subscripts"]
+            and not isinstance(expression, ArrayExpression)
+            and all(value == "*" for value in record["indices"].values())
+            and any(
+                node.op == "index" and "*" in node.indices.values()
+                for node in walk(expression)
+            )
+        ):
+            count = math.prod(len(elements) for elements in element_lists)
+            return ArrayExpression(
+                op="array",
+                values=[expression for _ in range(count)],
+                shape=[len(elements) for elements in element_lists],
+            )
+        return expression
+    subscripts = _merged_subscripts(records, dimensions)
     element_lists = [dimensions[name].elements for name in subscripts]
     expected = list(itertools.product(*element_lists))
     values = []
     for elements in expected:
         candidates = []
         for record in records:
-            if all(record["indices"].get(name) in {element, "*"} for name, element in zip(subscripts, elements, strict=True)):
-                specificity = sum(record["indices"].get(name) != "*" for name in subscripts)
-                candidates.append((specificity, record[field]))
+            indices = _mapped_indices(record["indices"], record["subscripts"], subscripts, dimensions)
+            if not all(
+                indices.get(name) in {element, "*"}
+                and element in dimensions[record["subscripts"][axis]].elements
+                for axis, (name, element) in enumerate(
+                    zip(subscripts, elements, strict=True)
+                )
+            ):
+                continue
+            if any(
+                _exception_matches(exception, record, subscripts, elements, dimensions)
+                for exception in record["exceptions"]
+            ):
+                continue
+            expression = record[field]
+            if isinstance(expression, ArrayExpression):
+                coordinates = tuple(
+                    element if record["indices"][local] == "*" else record["indices"][local]
+                    for local, element in zip(record["subscripts"], elements, strict=True)
+                )
+                local_elements = list(
+                    itertools.product(
+                        *(
+                            dimensions[local].elements
+                            if record["indices"][local] == "*"
+                            else [record["indices"][local]]
+                            for local in record["subscripts"]
+                        )
+                    )
+                )
+                if coordinates not in local_elements or len(expression.values) != len(local_elements):
+                    raise ModelValidationError("incompatible nested subscripted array assignment")
+                expression = expression.values[local_elements.index(coordinates)]
+            specificity = sum(indices.get(name) != "*" for name in subscripts)
+            candidates.append((specificity, expression))
         if not candidates:
             raise ModelValidationError(f"incomplete subscripted assignments for {elements}")
         best = max(score for score, _ in candidates)
@@ -144,8 +344,50 @@ def _merge_expressions(
     return ArrayExpression(
         op="array",
         values=values,
-        shape=[len(expected)] if len(expected) > 1 else None,
+        shape=[len(elements) for elements in element_lists] if len(expected) > 1 else None,
     )
+
+
+def _rename_dimensions(value, names: dict[str, str]):
+    if isinstance(value, list):
+        return [_rename_dimensions(item, names) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: _rename_dimensions(item, names) for key, item in value.items()}
+    if result.get("op") == "index":
+        result["indices"] = {
+            names.get(name, name): element
+            for name, element in result["indices"].items()
+        }
+    elif result.get("op") == "ref" and result.get("name") in names:
+        result["name"] = names[result["name"]]
+    return result
+
+
+def _unify_equivalent_dimensions(
+    variables: list[dict], dimensions: dict[str, Dimension]
+) -> None:
+    groups = {}
+    for name, dimension in dimensions.items():
+        groups.setdefault(tuple(dimension.elements), []).append(name)
+    names = {}
+    for group in groups.values():
+        if len(group) < 2 or any(
+            len(set(variable["subscripts"]) & set(group)) > 1 for variable in variables
+        ):
+            continue
+        names.update({name: group[0] for name in group[1:]})
+    if not names:
+        return
+    for variable in variables:
+        variable["subscripts"] = [names.get(name, name) for name in variable["subscripts"]]
+        for field in ("initial", "derivative", "expression"):
+            if variable.get(field) is not None:
+                variable[field] = _rename_dimensions(
+                    variable[field].model_dump(mode="json"), names
+                )
+    for name in names:
+        del dimensions[name]
 
 
 def import_subscripted(
@@ -167,7 +409,7 @@ def import_subscripted(
     names = {}
     details = []
     for item in raw:
-        base, subscripts, indices = _label_details(
+        base, subscripts, indices, exception_indices = _label_details(
             item["label"], dimensions, element_dimensions
         )
         if base not in names:
@@ -180,6 +422,7 @@ def import_subscripted(
                 "id": names[base],
                 "subscripts": subscripts,
                 "indices": indices,
+                "exceptions": exception_indices,
             }
         )
     variable_subscripts = {
@@ -201,7 +444,7 @@ def import_subscripted(
             "id": item["id"],
             "label": item["base"],
             "description": item["description"] or None,
-            "units": parse_units(item["units"]),
+            "units": _import_units(item["units"]),
             "units_raw": item["units"] or None,
             "subscripts": item["subscripts"],
         }
@@ -217,23 +460,24 @@ def import_subscripted(
         else:
             record = {**common, "kind": "auxiliary", "expression": expression}
         record["indices"] = item["indices"]
+        record["exceptions"] = item["exceptions"]
         groups.setdefault(item["id"], []).append(record)
 
     variables = []
     flows = set()
     for group in groups.values():
         first = group[0]
-        common = {key: value for key, value in first.items() if key != "indices"}
+        common = {
+            key: value for key, value in first.items() if key not in {"indices", "exceptions"}
+        }
+        common["subscripts"] = _merged_subscripts(group, dimensions)
         if first["kind"] == "stock":
-            derivatives = [record["derivative"].model_dump(mode="json") for record in group]
-            if any(item != derivatives[0] for item in derivatives[1:]):
-                raise ModelValidationError("element-specific stock derivatives are not supported")
             variable = {
                 **common,
                 "initial": _merge_expressions(group, "initial", dimensions),
-                "derivative": first["derivative"],
+                "derivative": _merge_expressions(group, "derivative", dimensions),
             }
-            flows.update(dependencies(first["derivative"]))
+            flows.update(dependencies(variable["derivative"]))
         else:
             variable = {
                 **common,
@@ -241,6 +485,7 @@ def import_subscripted(
             }
         variables.append(variable)
 
+    _unify_equivalent_dimensions(variables, dimensions)
     for variable in variables:
         if variable["kind"] == "stock":
             continue
@@ -275,7 +520,7 @@ def import_subscripted(
         ),
         variables=variables,
         tables=tables,
-        dimensions=dimensions_list,
+        dimensions=list(dimensions.values()),
         provenance={
             "kind": "vensim_import",
             "source_name": source_name,

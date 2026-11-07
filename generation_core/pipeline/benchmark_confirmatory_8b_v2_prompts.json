@@ -1,0 +1,139 @@
+[
+  {
+    "id": "blind8b_en_syrup_cooling",
+    "description": "A vessel of warm syrup cools toward room temperature. Its heat loss is proportional to the temperature difference and there is no heater.",
+    "expected_pattern": "teacup_cooling"
+  },
+  {
+    "id": "blind8b_ru_wolves_deer",
+    "description": "Создай модель Лотка-Волтерра: олени размножаются, волки питаются оленями, а численность волков снижается естественным образом.",
+    "expected_pattern": "predator_prey"
+  },
+  {
+    "id": "blind8b_en_contact_outbreak",
+    "description": "An outbreak moves susceptible individuals to the infectious group through contact, and then to the recovered group through recovery.",
+    "expected_pattern": "sir_epidemic"
+  },
+  {
+    "id": "blind8b_ru_research_staff",
+    "description": "Лаборатория нанимает новичков, которые со временем становятся экспертами. Часть экспертов увольняется после работы в лаборатории.",
+    "expected_pattern": "workforce"
+  },
+  {
+    "id": "blind8b_en_managed_forest",
+    "description": "A managed forest regenerates toward its carrying capacity while a fixed fractional harvest removes timber each year.",
+    "expected_pattern": "renewable_resource"
+  },
+  {
+    "id": "blind8b_ru_mobile_product",
+    "description": "Новый мобильный продукт внедряется благодаря рекламе и подражанию потенциальных пользователей текущим владельцам.",
+    "expected_pattern": "bass_diffusion"
+  },
+  {
+    "id": "blind8b_en_bookshop_inventory",
+    "description": "A bookshop inventory decreases through daily sales, while purchasing moves the available quantity back toward its target level.",
+    "expected_pattern": "inventory"
+  },
+  {
+    "id": "blind8b_ru_relaxation_cycle",
+    "description": "Построй осциллятор Ван дер Поля с нелинейным демпфированием и устойчивым предельным циклом.",
+    "expected_pattern": "van_der_pol_oscillator",
+    "expected_behavior": "limit_cycle"
+  },
+  {
+    "id": "blind8b_ru_tracer_decay",
+    "description": "Метка tracer=16 mg уменьшается по d(tracer)/dt = -0.4*tracer. Время в hour, горизонт 10 hour, используй coefficient=0.4 hour^-1 как именованную константу.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "analytic_exponential", "variable": "tracer", "initial": 16, "rate": -0.4, "time": 10, "tolerance": 0.02}
+  },
+  {
+    "id": "blind8b_en_coupled_tanks",
+    "description": "Two sealed tanks contain tank_a=90 litre and tank_b=30 litre. Use d(tank_a)/dt = -0.05*(tank_a-tank_b) and d(tank_b)/dt = 0.05*(tank_a-tank_b). There are no external flows. Time has unit hour and the horizon is 80 hour. Preserve both equations and dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "conservation", "variables": ["tank_a", "tank_b"], "tolerance": 0.01}
+  },
+  {
+    "id": "blind8b_ru_signal_approach",
+    "description": "Сигнал signal=2 state изменяется по d(signal)/dt = 0.5*(12-signal). Используй threshold=12 state и coefficient=0.5 second^-1, горизонт 16 second.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "signal", "value": 12, "tolerance": 0.01}
+  },
+  {
+    "id": "blind8b_en_competing_resources",
+    "description": "Two resource users start with m=20 entity and n=15 entity. Use dm/dt = m*(0.5-0.004*m-0.002*n) and dn/dt = n*(0.4-0.001*m-0.005*n). Both states have units entity, model time has unit year, and the horizon is 160 year. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "m", "value": 94.4444444444, "tolerance": 0.2}
+  },
+  {
+    "id": "blind8b_ru_three_reservoirs",
+    "description": "Замкнутая система содержит reservoir_a=30 item, reservoir_b=60 item, reservoir_c=10 item. Используй d(reservoir_a)/dt=-0.3*reservoir_a, d(reservoir_b)/dt=0.3*reservoir_a-0.15*reservoir_b и d(reservoir_c)/dt=0.15*reservoir_b. Внешних источников и стоков нет, время minute, горизонт 50 minute.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "conservation", "variables": ["reservoir_a", "reservoir_b", "reservoir_c"], "tolerance": 0.01}
+  },
+  {
+    "id": "blind8b_en_nutrient_harvest",
+    "description": "A nutrient culture begins with nutrient=80 tonne. Use d(nutrient)/dt = 0.3*nutrient*(1-nutrient/400)-5. Represent 400 tonne as a named upper bound, keep tonne and year units consistent, and use a 180 year horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "nutrient", "value": 382.5741858351, "tolerance": 0.1}
+  },
+  {
+    "id": "blind8b_ru_small_oscillation",
+    "description": "Начальные состояния displacement=0.5 и speed=0. Используй d(displacement)/dt = speed и d(speed)/dt = -9*displacement-0.2*speed. Обе переменные имеют единицу state, время time, горизонт 20. Используй именованные коэффициенты для согласования размерностей.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "displacement", "minimum": 4}
+  },
+  {
+    "id": "blind8b_en_solvent_draw",
+    "description": "A vessel has solvent=600 litre. Withdrawal is 8 litre/minute until time=5 minute, then 18 litre/minute. Use one outflow to an external sink, no inflow, and a 20 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "solvent", "at": 5, "after": 20, "relation": "below", "value": 350}
+  },
+  {
+    "id": "blind8b_ru_parcel_service",
+    "description": "На упаковочной линии parcels=6 item. Поступление равно 10 item/hour первые 2 hour, затем прекращается. Обслуживание min(parcels/service_time,max_service), где service_time=0.25 hour, max_service=8 item/hour. parcels должны быть неотрицательными, горизонт 15 hour, используй неотрицательную политику.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "parcels", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "blind8b_en_short_infusion",
+    "description": "A sample starts with reagent_mass=1 mg. A pump adds 4 mg/minute from time=0.25 minute until time=1 minute, then stops. Natural clearance has coefficient=0.5 minute^-1. Use a 6 minute horizon and consistent mg and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "reagent_mass", "at": 1, "after": 6, "relation": "decrease"}
+  },
+  {
+    "id": "blind8b_ru_material_response",
+    "description": "Участок получает crate через материальный отклик третьего порядка с transport_time=1.2 minute. Внешний crate_rate равен 0 crate/minute до time=1 minute и 9 crate/minute после него. Начальная выходная скорость отклика 0 crate/minute, terminal_crates=0 crate, а расход имеет time_constant=1.5 minute. Горизонт 16 minute.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "terminal_crates", "at": 0.5, "before_max": 0, "after_min": 4.5}
+  },
+  {
+    "id": "blind8b_en_nonlinear_interaction",
+    "description": "Two interacting states start with x=30 entity and y=3 entity. Use dx/dt = 0.6*x-0.04*x^2-0.015*x*y and dy/dt = 0.012*x*y-0.25*y. Both states use unit entity, time has unit year, and the horizon is 80 year. Preserve every coefficient and use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "y", "after": 0.5}
+  },
+  {
+    "id": "blind8b_ru_excitable_recovery",
+    "description": "Система начинается с a=1 и b=0. Используй da/dt = a-a^3/3-b+0.5 и db/dt = 0.09*(a+0.7-0.55*b). Обе переменные имеют единицу state, время time, горизонт 140. Используй именованные масштабные коэффициенты для размерностей.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "a", "minimum": 2}
+  },
+  {
+    "id": "blind8b_en_signed_power",
+    "description": "An energy store has stored_energy=80 kWh. Its net power is -3 kW until time=3 hour and +5 kW afterwards. Use exactly one net flow into stored_energy and no other flows, over an 8 hour horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "stored_energy", "at": 3, "after": 8, "relation": "increase"}
+  },
+  {
+    "id": "blind8b_ru_concentration",
+    "description": "Концентрация concentration=3 mg_per_litre подчиняется d(concentration)/dt = 0.25*(6-concentration). Время hour, горизонт 30 hour. Задай threshold=6 mg_per_litre и coefficient=0.25 hour^-1 как именованные константы.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "concentration", "value": 6, "tolerance": 0.01}
+  },
+  {
+    "id": "blind8b_en_periodic_relaxation",
+    "description": "A dimensionless response starts at 0 and follows d(response)/dt = 0.2*(4+sin(0.4*time)-response). Both the state and additive constants are dimensionless, model time has unit time, and the horizon is 30. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "range", "variable": "response", "min": 0, "max": 5}
+  }
+]

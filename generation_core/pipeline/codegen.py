@@ -65,6 +65,10 @@ def expression_to_vensim(
             return "1" if expression.value else "0"
         return repr(expression.value)
     if isinstance(expression, ReferenceExpression):
+        if expression.name not in names and any(
+            expression.name in dimensions for dimensions in subscripts.values()
+        ):
+            return expression.name
         result = _name(names[expression.name])
         if expression.name in subscripts:
             result += f"[{','.join(subscripts[expression.name])}]"
@@ -171,12 +175,155 @@ def _array_assignment_lines(
     lines = []
     for index, values in enumerate(elements):
         name = f"{runtime_name(variable.label or variable.id)}[{','.join(values)}]"
-        rhs = expression_to_vensim(expression.values[index], names, tables, subscripts)
+        rhs = expression_to_vensim(
+            _element_expression(expression.values[index], variable.subscripts, values),
+            names,
+            tables,
+            subscripts,
+        )
         lines.extend(
             [
                 f"{name} = {rhs}",
                 f"\t~ {format_units(variable.units, variable.units_raw)}",
                 f"\t~ {variable.description or ''} |",
+                "",
+            ]
+        )
+    return lines
+
+
+def _element_expression(
+    expression: Expression, subscripts: list[str], elements: tuple[str, ...], aggregate: bool = False
+) -> Expression:
+    if isinstance(expression, IndexedExpression):
+        if aggregate or not any(element == "*" for element in expression.indices.values()):
+            return expression
+        indices = {}
+        for position, (name, index) in enumerate(expression.indices.items()):
+            if index != "*":
+                indices[name] = index
+            elif name in subscripts:
+                indices[name] = elements[subscripts.index(name)]
+            elif len(expression.indices) == len(subscripts):
+                indices[name] = elements[position]
+            else:
+                raise ValueError("cannot resolve a partially indexed array expression")
+        return expression.model_copy(update={"indices": indices})
+    if isinstance(expression, UnaryExpression):
+        return expression.model_copy(
+            update={"arg": _element_expression(expression.arg, subscripts, elements, aggregate)}
+        )
+    if isinstance(expression, BinaryExpression | CompareExpression):
+        return expression.model_copy(
+            update={
+                "args": tuple(
+                    _element_expression(argument, subscripts, elements, aggregate)
+                    for argument in expression.args
+                )
+            }
+        )
+    if isinstance(expression, BooleanExpression | CallExpression):
+        nested_aggregate = aggregate or (
+            isinstance(expression, CallExpression) and expression.name in {"sum", "prod", "vmin", "vmax"}
+        )
+        return expression.model_copy(
+            update={
+                "args": [
+                    _element_expression(argument, subscripts, elements, nested_aggregate)
+                    for argument in expression.args
+                ]
+            }
+        )
+    if isinstance(expression, IfExpression):
+        return expression.model_copy(
+            update={
+                "condition": _element_expression(expression.condition, subscripts, elements, aggregate),
+                "then": _element_expression(expression.then, subscripts, elements, aggregate),
+                "otherwise": _element_expression(expression.otherwise, subscripts, elements, aggregate),
+            }
+        )
+    if isinstance(expression, LookupExpression):
+        return expression.model_copy(
+            update={"arg": _element_expression(expression.arg, subscripts, elements, aggregate)}
+        )
+    if isinstance(expression, ArrayExpression):
+        return expression.model_copy(
+            update={
+                "values": [
+                    _element_expression(value, subscripts, elements, aggregate)
+                    for value in expression.values
+                ]
+            }
+        )
+    return expression
+
+
+def _array_stock_lines(
+    variable,
+    document: ModelDocument,
+    names: dict[str, str],
+    tables: dict[str, str],
+    subscripts: dict[str, list[str]],
+    initial_helpers: dict[str, str],
+) -> list[str]:
+    derivative = variable.derivative
+    dimensions = {item.id: item.elements for item in document.dimensions}
+    elements = list(itertools.product(*(dimensions[name] for name in variable.subscripts)))
+    if len(elements) != len(derivative.values):
+        raise ValueError(f"derivative array shape mismatch for {variable.id}")
+    lines = []
+    for index, values in enumerate(elements):
+        name = f"{runtime_name(variable.label or variable.id)}[{','.join(values)}]"
+        initial_expression = (
+            variable.initial.values[index]
+            if isinstance(variable.initial, ArrayExpression)
+            else variable.initial
+        )
+        derivative_expression = derivative.values[index]
+        initial = expression_to_vensim(
+            _element_expression(initial_expression, variable.subscripts, values), names, tables, subscripts
+        )
+        rhs = expression_to_vensim(
+            _element_expression(derivative_expression, variable.subscripts, values),
+            names,
+            tables,
+            subscripts,
+        )
+        lines.extend(
+            [
+                f"{name} = INTEG({rhs}, {initial})",
+                f"\t~ {format_units(variable.units, variable.units_raw)}",
+                f"\t~ {variable.description or ''} |",
+                "",
+            ]
+        )
+    return lines
+
+
+def _array_initial_lines(
+    variable,
+    helper: str,
+    document: ModelDocument,
+    names: dict[str, str],
+    tables: dict[str, str],
+    subscripts: dict[str, list[str]],
+) -> list[str]:
+    expression = variable.initial
+    dimensions = {item.id: item.elements for item in document.dimensions}
+    elements = list(itertools.product(*(dimensions[name] for name in variable.subscripts)))
+    if len(elements) != len(expression.values):
+        raise ValueError(f"initial array shape mismatch for {variable.id}")
+    lines = []
+    for index, values in enumerate(elements):
+        name = f"{helper}[{','.join(values)}]"
+        rhs = expression_to_vensim(
+            _element_expression(expression.values[index], variable.subscripts, values), names, tables, subscripts
+        )
+        lines.extend(
+            [
+                f"{name} = {rhs}",
+                f"\t~ {format_units(variable.units, variable.units_raw)}",
+                "\t~ |",
                 "",
             ]
         )
@@ -198,7 +345,11 @@ def export_vensim(document: ModelDocument) -> str:
         lines.extend([f"{_name(table.label or table.id)}({definition})", "\t~", "\t~ |", ""])
     initial_helpers = {}
     for variable in document.variables:
-        if variable.kind != "stock" or not isinstance(variable.initial, ArrayExpression):
+        if (
+            variable.kind != "stock"
+            or not isinstance(variable.initial, ArrayExpression)
+            or isinstance(variable.derivative, ArrayExpression)
+        ):
             continue
         helper = f"initial_{variable.id}"
         suffix = 2
@@ -208,17 +359,11 @@ def export_vensim(document: ModelDocument) -> str:
         initial_helpers[variable.id] = helper
         names[helper] = helper
         subscripts[helper] = variable.subscripts
-        helper_name = f"{helper}[{','.join(variable.subscripts)}]"
-        values = expression_to_vensim(variable.initial, names, tables, subscripts)
-        lines.extend(
-            [
-                f"{helper_name} = {values}",
-                f"\t~ {format_units(variable.units, variable.units_raw)}",
-                "\t~ |",
-                "",
-            ]
-        )
+        lines.extend(_array_initial_lines(variable, helper, document, names, tables, subscripts))
     for variable in document.variables:
+        if variable.kind == "stock" and isinstance(variable.derivative, ArrayExpression) and variable.subscripts:
+            lines.extend(_array_stock_lines(variable, document, names, tables, subscripts, initial_helpers))
+            continue
         if variable.kind != "stock" and isinstance(variable.expression, ArrayExpression) and variable.subscripts:
             lines.extend(_array_assignment_lines(variable, document, names, tables, subscripts))
             continue

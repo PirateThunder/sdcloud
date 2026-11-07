@@ -30,6 +30,11 @@ _EQUATION_START = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_END = re.compile(r"\.\s+(?=[A-ZА-Я`])")
+_SHARED_UNITS = re.compile(
+    r"\b(?:both|all)\s+(?:[A-Za-z_]+\s+){0,3}states?\s+(?:use|have)\s+"
+    r"(?:the\s+)?units?\s+(?:named\s+)?[`'\"]?([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
 _EXPRESSION_ADAPTER = TypeAdapter(Expression)
 _FUNCTIONS = {
     "abs": abs,
@@ -55,6 +60,18 @@ class _UnsupportedExpression(ValueError):
     pass
 
 
+def _expression_prefix(text: str) -> str:
+    depth = 0
+    for index, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth = max(0, depth - 1)
+        elif character in ",;" and depth == 0:
+            return text[:index]
+    return text
+
+
 def explicit_ode_expressions(description: str) -> dict[str, tuple[str, Expression]]:
     matches = list(_EQUATION_START.finditer(description))
     if not matches:
@@ -65,9 +82,9 @@ def explicit_ode_expressions(description: str) -> dict[str, tuple[str, Expressio
         if stock in result:
             return {}
         end = matches[index + 1].start() if index + 1 < len(matches) else len(description)
-        raw = description[match.end() : end].strip()
+        raw = _expression_prefix(description[match.end() : end]).strip()
         raw = re.sub(r"(?:\s+and|\s+и)$", "", raw, flags=re.IGNORECASE).strip()
-        raw = _SENTENCE_END.split(raw, maxsplit=1)[0].strip().rstrip(",;")
+        raw = _SENTENCE_END.split(raw, maxsplit=1)[0].strip().rstrip(",;").removesuffix(".")
         if not raw or len(raw) > 2000:
             continue
         try:
@@ -321,6 +338,28 @@ def _explicit_initial(description: str, stock: str) -> float | None:
         return None
 
 
+def normalize_explicit_ode_payload(payload: dict, description: str) -> dict:
+    stocks = set(explicit_ode_expressions(description))
+    if not stocks or not isinstance(payload, dict) or not isinstance(payload.get("components"), list):
+        return payload
+    components = []
+    for component in payload["components"]:
+        if not isinstance(component, dict) or component.get("kind") != "polynomial_ode":
+            components.append(component)
+            continue
+        parameters = component.get("parameters")
+        if not isinstance(parameters, list):
+            components.append(component)
+            continue
+        retained = [
+            parameter
+            for parameter in parameters
+            if not isinstance(parameter, dict) or parameter.get("id") not in stocks
+        ]
+        components.append(component if len(retained) == len(parameters) else {**component, "parameters": retained})
+    return {**payload, "components": components}
+
+
 def apply_explicit_odes(plan: ComponentPlan, description: str) -> ComponentPlan:
     from .ir import dependencies
     from .schemas import OdeStockSpec
@@ -328,6 +367,8 @@ def apply_explicit_odes(plan: ComponentPlan, description: str) -> ComponentPlan:
     sources = explicit_ode_expressions(description)
     if not sources or not plan.components:
         return plan
+    shared_units = _SHARED_UNITS.search(description)
+    declared_units = {shared_units.group(1): 1} if shared_units else None
     ode_components = [component for component in plan.components if component.kind == "polynomial_ode"]
     component_stocks = {component.stock for component in ode_components}
     missing = set(sources) - component_stocks
@@ -343,7 +384,7 @@ def apply_explicit_odes(plan: ComponentPlan, description: str) -> ComponentPlan:
     if missing and ode_components:
         units = {tuple(sorted(component.units.items())) for component in ode_components}
         time_units = {component.time_unit for component in ode_components}
-        if len(units) == 1 and len(time_units) == 1:
+        if (len(units) == 1 or declared_units) and len(time_units) == 1:
             template = ode_components[0]
             for stock in sorted(missing):
                 initial = _explicit_initial(description, stock)
@@ -356,7 +397,7 @@ def apply_explicit_odes(plan: ComponentPlan, description: str) -> ComponentPlan:
                         kind="polynomial_ode",
                         stock=stock,
                         initial=initial,
-                        units=template.units,
+                        units=declared_units or template.units,
                         time_unit=template.time_unit,
                         terms=terms,
                         parameters=[],
@@ -384,6 +425,7 @@ def apply_explicit_odes(plan: ComponentPlan, description: str) -> ComponentPlan:
         components.append(
             component.model_copy(
                 update={
+                    "units": declared_units or component.units,
                     "terms": terms,
                     "parameters": [
                         parameter

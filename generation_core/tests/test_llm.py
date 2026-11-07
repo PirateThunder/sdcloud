@@ -174,11 +174,43 @@ async def test_rate_limit_is_retried_but_client_schema_error_is_not():
     )
     try:
         assert await llm.chat_json("Return JSON", stage="brief") == {"ok": True}
-        with pytest.raises(LLMError, match="HTTP 400"):
+        with pytest.raises(LLMError, match="HTTP 400") as exc_info:
             await llm.chat_json("Return JSON", stage="variables")
+        assert exc_info.value.status_code == 400
     finally:
         await llm.close()
     assert len(requests) == 3
+
+
+async def test_openrouter_retry_policy_is_configurable(monkeypatch):
+    from pipeline.llm import OpenRouterLLM
+
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return response_with_content('{"ok": true}')
+
+    monkeypatch.setenv("LLM_REQUEST_RETRIES", "7")
+    monkeypatch.setenv("LLM_RETRY_DELAY", "0.25")
+    monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "CoreWeave")
+    monkeypatch.setenv("OPENROUTER_ALLOW_PROVIDER_FALLBACK", "0")
+    llm = OpenRouterLLM(
+        api_key="test",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert llm.request_retries == 7
+        assert llm.retry_delay == 0.25
+        assert await llm.chat_json("prompt", stage="test") == {"ok": True}
+        assert requests[0]["provider"] == {
+            "order": ["CoreWeave"],
+            "allow_fallbacks": False,
+            "require_parameters": True,
+        }
+    finally:
+        await llm.close()
 
 
 async def test_empty_content_has_actionable_finish_reason():

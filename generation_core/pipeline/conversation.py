@@ -26,6 +26,20 @@ async def respond_to_message(
     workdir: Path | None = None,
     max_repairs: int | None = None,
 ) -> ConversationResponse:
+    from .routing import generate_with_routing
+
+    return await generate_with_routing(
+        llm, _respond_to_message_once, request, workdir=workdir, max_repairs=max_repairs
+    )
+
+
+async def _respond_to_message_once(
+    request: ConversationRequest,
+    llm: LLMClient,
+    *,
+    workdir: Path | None = None,
+    max_repairs: int | None = None,
+) -> ConversationResponse:
     repairs = max_repairs if max_repairs is not None else int(os.environ.get("LLM_MAX_REPAIRS", "3"))
     budget = _RepairBudget(max(0, min(repairs, 3)))
     _save_stage(workdir, "message")

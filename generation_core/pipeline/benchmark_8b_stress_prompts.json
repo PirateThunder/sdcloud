@@ -1,0 +1,163 @@
+[
+  {
+    "id": "confirmatory_ru_insulated_part",
+    "description": "Массивная металлическая деталь остывает в цехе. Теплоотдача пропорциональна разности температур детали и воздуха, нагревателя нет.",
+    "expected_pattern": "teacup_cooling"
+  },
+  {
+    "id": "confirmatory_en_owls_mice",
+    "description": "Build a Lotka-Volterra predator-prey model in which mice reproduce, owls consume mice, and the owl population declines through natural mortality.",
+    "expected_pattern": "predator_prey"
+  },
+  {
+    "id": "confirmatory_ru_boarding_school",
+    "description": "В школе-интернате эпидемия: восприимчивые ученики заражаются при контакте с больными, затем выздоравливают и остаются в отдельной группе выздоровевших.",
+    "expected_pattern": "sir_epidemic"
+  },
+  {
+    "id": "confirmatory_en_design_studio",
+    "description": "A design studio hires trainees who gradually become senior consultants. Senior consultants eventually leave for other jobs.",
+    "expected_pattern": "workforce"
+  },
+  {
+    "id": "confirmatory_ru_trout_lake",
+    "description": "Популяция форели в озере восстанавливается по логистическому закону, а промысел изымает заданную долю рыбы за год.",
+    "expected_pattern": "renewable_resource"
+  },
+  {
+    "id": "confirmatory_en_open_source_tool",
+    "description": "An open-source product gains adopters through advertising and word of mouth from its existing user community.",
+    "expected_pattern": "bass_diffusion"
+  },
+  {
+    "id": "confirmatory_ru_parts_inventory",
+    "description": "На складе запчастей продажи непрерывно уменьшают запас, а закупки возвращают его к целевому уровню.",
+    "expected_pattern": "inventory"
+  },
+  {
+    "id": "confirmatory_en_recurring_fever",
+    "description": "Create a SIRS model with seasonal contact rates, waning immunity and repeated waves of fever infections.",
+    "expected_pattern": "sirs_epidemic",
+    "expected_behavior": "repeated_waves"
+  },
+  {
+    "id": "confirmatory_en_convection",
+    "description": "Create the Lorenz three-variable convection model with its standard chaotic butterfly attractor.",
+    "expected_pattern": "lorenz_system",
+    "expected_behavior": "chaotic_sign_changes"
+  },
+  {
+    "id": "confirmatory_en_relaxation_oscillator",
+    "description": "Model a Van der Pol relaxation oscillator with nonlinear damping and a persistent limit cycle.",
+    "expected_pattern": "van_der_pol_oscillator",
+    "expected_behavior": "limit_cycle"
+  },
+  {
+    "id": "confirmatory_ru_language_club",
+    "description": "Студенты создают разговорный клуб с ограниченной вместимостью, выгоранием участников и рекламной кампанией после недели 60.",
+    "expected_pattern": "student_club",
+    "expected_behavior": "campaign_wave"
+  },
+  {
+    "id": "confirmatory_en_bullwhip_retailer",
+    "description": "A supply chain experiences a demand increase, shipping delays and bullwhip amplification of retailer purchasing orders.",
+    "expected_pattern": "supply_chain_bullwhip",
+    "expected_behavior": "bullwhip"
+  },
+  {
+    "id": "confirmatory_ru_thermal_difference",
+    "description": "Начальная разность difference=50 heat_unit. Используй d(difference)/dt = -0.15*difference, единицу времени minute и горизонт 30 minute. Создай именованный coefficient с единицами minute^-1.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "analytic_exponential", "variable": "difference", "initial": 50, "rate": -0.15, "time": 30, "tolerance": 0.02}
+  },
+  {
+    "id": "confirmatory_en_closed_exchange",
+    "description": "A sealed system has tank_a=60 litre and tank_b=15 litre. Use d(tank_a)/dt = -0.1*(tank_a-tank_b) and d(tank_b)/dt = 0.1*(tank_a-tank_b). There are no external sources or sinks. Time is measured in minute and the horizon is 60 minute. Use named constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "conservation", "variables": ["tank_a", "tank_b"], "tolerance": 0.01}
+  },
+  {
+    "id": "confirmatory_ru_skill_saturation",
+    "description": "Навык skill=0 skill_unit изменяется по d(skill)/dt = 0.2*(100-skill). Горизонт 40 minute, значение 100 skill_unit представь именованным threshold, а coefficient задай в minute^-1.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "skill", "value": 100, "tolerance": 0.1}
+  },
+  {
+    "id": "confirmatory_en_competing_colonies",
+    "description": "Two colonies begin with alpha=30 population and beta=20 population. Use d(alpha)/dt = alpha*(0.4 - 0.005*alpha - 0.002*beta) and d(beta)/dt = beta*(0.3 - 0.001*alpha - 0.003*beta). Both states use unit population, time has unit year, and the horizon is 200 year. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "alpha", "value": 46.1538461538, "tolerance": 0.2}
+  },
+  {
+    "id": "confirmatory_ru_conserved_traffic",
+    "description": "В замкнутой системе cell_a=80 item, cell_b=20 item, cell_c=0 item. Используй d(cell_a)/dt=-0.2*cell_a, d(cell_b)/dt=0.2*cell_a-0.1*cell_b и d(cell_c)/dt=0.1*cell_b. Внешних потоков нет, время в second, горизонт 80 second.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "conservation", "variables": ["cell_a", "cell_b", "cell_c"], "tolerance": 0.01}
+  },
+  {
+    "id": "confirmatory_en_bounded_algae",
+    "description": "A culture begins with algae=50 tonne. Use d(algae)/dt = 0.4*algae*(1-algae/500)-10. Represent 500 tonne as a named upper bound, keep all units consistent, use year for time and a 200 year horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "algae", "value": 473.60679775, "tolerance": 0.1}
+  },
+  {
+    "id": "confirmatory_ru_damped_coordinate",
+    "description": "Начальные состояния coordinate=2 и rate=0. Используй d(coordinate)/dt = rate и d(rate)/dt = -16*coordinate-0.4*rate. Обе переменные имеют единицу state, время time, горизонт 25. Используй именованные масштабные коэффициенты для размерностей.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "coordinate", "minimum": 6}
+  },
+  {
+    "id": "confirmatory_en_scheduled_reservoir",
+    "description": "A reservoir contains water_volume=300 litre. Outflow is 5 litre/second until time=2 second, then 20 litre/second. Model one stock and one outflow to an external sink over a 10 second horizon, with no inflow.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "water_volume", "at": 2, "after": 10, "relation": "below", "value": 230}
+  },
+  {
+    "id": "confirmatory_ru_letter_queue",
+    "description": "В почтовом отделении letters=3 item. Письма поступают со скоростью 8 item/hour первые 3 hour, затем поступления прекращаются. Обработка равна min(letters/service_time,max_service), где service_time=0.5 hour, max_service=6 item/hour. letters неотрицательны, горизонт 12 hour, используй неотрицательную политику обслуживания.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "letters", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "confirmatory_en_delayed_infusion",
+    "description": "A vessel contains compound=0.25 gram. A pump supplies 2 gram/minute from time=0.5 minute until time=1.25 minute, then stops. Natural elimination has coefficient=0.4 minute^-1. Use an 8 minute horizon and consistent gram and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "compound", "at": 1.25, "after": 8, "relation": "decrease"}
+  },
+  {
+    "id": "confirmatory_ru_transport_response",
+    "description": "Линия получает item через материальный отклик третьего порядка с transport_time=2 minute. Внешний item_rate равен 0 item/minute до time=2 minute и 10 item/minute после него. Начальная выходная скорость отклика 0 item/minute, расход terminal_items имеет time_constant=1 minute и terminal_items=0 item в начале. Горизонт 18 minute.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "terminal_items", "at": 1, "before_max": 0, "after_min": 5}
+  },
+  {
+    "id": "confirmatory_en_coupled_colonies",
+    "description": "Two interacting populations begin with a=50 population and b=4 population. Use da/dt = 0.7*a - 0.05*a^2 - 0.02*a*b and db/dt = 0.01*a*b - 0.2*b. Both states use unit population, time has unit year, and the horizon is 100 year. Preserve every coefficient and use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "b", "after": 1}
+  },
+  {
+    "id": "confirmatory_ru_excitable_states",
+    "description": "Система начинается с m=1 и n=0. Используй dm/dt = m-m^3/3-n+0.8 и dn/dt = 0.08*(m+0.6-0.5*n). Обе переменные имеют единицу state, время time, горизонт 140. Используй именованные масштабные коэффициенты для размерностей.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "m", "minimum": 2}
+  },
+  {
+    "id": "confirmatory_en_net_charging",
+    "description": "A battery has charge=100 Wh. Its net charging power is -2 W until time=4 hour and +2 W afterwards. There is only one net flow into charge. Use a 10 hour horizon and do not add any other losses or charging processes.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "charge", "at": 4, "after": 10, "relation": "increase"}
+  },
+  {
+    "id": "confirmatory_ru_current_response",
+    "description": "Ток current=1 ampere подчиняется d(current)/dt = 0.3*(8-current). Время измеряется в second, горизонт 30 second. Создай threshold=8 ampere и coefficient=0.3 second^-1 как именованные константы.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "current", "value": 8, "tolerance": 0.02}
+  },
+  {
+    "id": "confirmatory_en_periodic_level",
+    "description": "A dimensionless level begins at 0 and follows d(level)/dt = 0.1*(10+2*sin(0.5*time)-level). Both the level and additive constants are dimensionless, time has unit time, and the horizon is 40. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "range", "variable": "level", "min": 0, "max": 12}
+  }
+]

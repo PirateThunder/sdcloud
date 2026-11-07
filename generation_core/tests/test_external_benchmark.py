@@ -104,6 +104,25 @@ answer=40 + 2 ~~|
     assert report["results"][0]["compared_points"] == 2
 
 
+def test_external_benchmark_ignores_unreferenced_auxiliaries_but_not_bad_values(tmp_path):
+    source = """{UTF-8}
+selected=Time ~~|
+internal=2*Time ~~|
+INITIAL TIME=0 ~~|
+FINAL TIME=1 ~~|
+TIME STEP=1 ~~|
+SAVEPER=TIME STEP ~~|
+"""
+    write_case(tmp_path, "selected", source, "Time\tselected\n0\t0\n1\t1\n")
+    assert run_external_benchmark(tmp_path)["matched"] == 1
+    (tmp_path / "selected" / "output.tab").write_text("Time\tselected\n0\t0\n1\t2\n")
+    report = run_external_benchmark(tmp_path)
+    assert report["matched"] == 0
+    assert report["results"][0]["compared_points"] == 2
+    assert report["results"][0]["failed_points"] == 1
+    assert report["results"][0]["missing_variables"] == []
+
+
 def test_reference_timestamp_rounding_uses_the_actual_grid_point():
     series = [0.0, 10.0, 20.0]
     times = [0.0, 0.03125, 0.0625]

@@ -78,6 +78,14 @@ def test_extracts_explicit_equations_without_trailing_prose():
     assert sources["b"][0] == "0.12*(a + 0.5 - 0.6*b)"
 
 
+def test_extracts_all_equations_when_last_one_ends_with_a_period():
+    sources = explicit_ode_expressions(
+        "Use d(alpha)/dt = alpha-beta and d(beta)/dt = 0.5*alpha-beta."
+    )
+    assert set(sources) == {"alpha", "beta"}
+    assert sources["beta"][0] == "0.5*alpha-beta"
+
+
 def test_factored_and_correctly_expanded_equations_are_equivalent():
     validate_explicit_odes(DESCRIPTION, variables(recovery_components(factored=True)))
     validate_explicit_odes(DESCRIPTION, variables(recovery_components()))
@@ -214,3 +222,80 @@ async def test_explicit_rhs_overrides_llm_term_decomposition_without_repair():
     assert len(components["b"].terms) == 1
     assert components["b"].terms[0].coefficient == pytest.approx(0.12)
     assert "0.6" in components["b"].terms[0].expression
+
+
+async def test_stock_shadowing_is_removed_before_component_schema_validation():
+    llm = ExplicitEquationLLM()
+    llm.response = {
+        "components": [
+            {
+                "kind": "polynomial_ode",
+                "stock": "h",
+                "initial": 2,
+                "units": {"state": 1},
+                "time_unit": "time",
+                "terms": [{"coefficient": "k", "expression": "k", "sign": 1}],
+                "parameters": [{"id": "k", "value": 0, "role": "state", "units": None}],
+            },
+            {
+                "kind": "polynomial_ode",
+                "stock": "k",
+                "initial": 0,
+                "units": {"state": 1},
+                "time_unit": "time",
+                "terms": [{"coefficient": 0.5, "expression": "-4*h - 0.2*k + 0.6", "sign": 1}],
+                "parameters": [],
+            },
+        ],
+        "time": {"unit": "time", "initial_time": 0, "final_time": 80, "time_step": 0.05, "saveper": 0.05},
+        "assumptions": [],
+    }
+    document = await generate_model(
+        GenerationRequest(
+            description=(
+                "h=2 and k=0. Use dh/dt = k and dk/dt = 0.5*(-4*h - 0.2*k + 0.6). "
+                "Both states have units state, model time has unit time, and the horizon is 80."
+            )
+        ),
+        llm,
+        max_repairs=0,
+    )
+    assert llm.calls == ["brief", "components"]
+    assert document.validation.status == "passed"
+    assert document.repair_attempts == 0
+    h = next(component for component in document.brief.components if component.stock == "h")
+    assert h.terms[0].coefficient == 1
+    assert h.parameters == []
+
+
+def test_explicit_shared_state_units_override_llm_physical_guesses():
+    description = (
+        "displacement=1.5 and velocity=0. Use d(displacement)/dt = velocity and "
+        "d(velocity)/dt = 0.4*(-9*displacement - 0.3*velocity). "
+        "Both states use unit state and time has unit time."
+    )
+    components = [
+        {
+            "kind": "polynomial_ode",
+            "stock": "displacement",
+            "initial": 1.5,
+            "units": {"length": 1},
+            "time_unit": "time",
+            "terms": [{"coefficient": "velocity", "expression": "velocity", "sign": 1}],
+            "parameters": [{"id": "velocity", "value": 0, "role": "rate", "units": None}],
+        },
+        {
+            "kind": "polynomial_ode",
+            "stock": "velocity",
+            "initial": 0,
+            "units": {"length/time": 1},
+            "time_unit": "time",
+            "terms": [{"coefficient": 0.4, "expression": "-9*displacement - 0.3*velocity"}],
+            "parameters": [],
+        },
+    ]
+    transformed = apply_explicit_odes(
+        ComponentPlan.model_validate({"components": components}), description
+    )
+    assert all(component.units == {"state": 1} for component in transformed.components)
+    validate_explicit_odes(description, variables(transformed.components))

@@ -1,3 +1,35 @@
+DIRECT_GENERATION_PROMPT = """\
+По одному описанию создай полную системно-динамическую модель одним JSON-ответом.
+
+Описание:
+{description}
+
+Верни ТОЛЬКО JSON-объект с полями name, time, variables, tables и assumptions.
+time содержит unit, initial_time, final_time, time_step и saveper. Каждая переменная
+имеет уникальный ASCII snake_case id и kind=stock|flow|auxiliary|constant.
+Для stock задай initial как число или формулу. Для flow, auxiliary и constant задай
+expression как число или DSL-формулу. Для flow задай source и target: stock или cloud;
+хотя бы один endpoint должен быть stock. Для явного ОДУ можно задать stock.derivative,
+но только если оно согласовано с flow topology. units — словарь base unit -> integer
+exponent, {{}} для dimensionless; flow имеет units stock/time. Для неприменимых optional
+полей передавай null, для subscripts — [].
+
+DSL поддерживает числа, true/false, pi, e, time, variable ids, скобки, + - * / % ^,
+сравнения, and/or, not и функции min, max, abs, exp, log, log10, sqrt, sin, cos, tan,
+floor, ceil, round, power, xidz, zidz, if_then_else, step, pulse, pulse_train, ramp,
+delay1, delay3, delay1i, delay3i, smooth, smooth3, smoothi, smooth3i, initial.
+Это не Python: imports, lambda, атрибуты, индексы, присваивания и произвольные функции
+запрещены. Для lookup используй lookup(table_id, expression).
+
+Сохрани все явно заданные значения и уравнения. Fractional rate имеет units 1/time;
+для dimensional threshold, time constant и conversion создавай named constant с units.
+Не используй безразмерный literal для преобразования размерностей. Значения, которых
+нет в описании, выбирай только при необходимости и перечисляй в assumptions с непустым
+value, source="llm_inferred", rationale и requires_confirmation. Не добавляй assumptions
+для явно заданных параметров. Не заменяй предметную область готовым шаблоном.
+"""
+
+
 MODEL_BRIEF_PROMPT = """\
 Составь ModelBrief для системно-динамической модели по описанию.
 
@@ -26,6 +58,10 @@ MODEL_BRIEF_PROMPT = """\
 COMPONENT_BRIEF_GUIDANCE = """\
 Для новой модели вне проверенного pattern используй typed components, если они покрывают
 механизмы системы. Builder сам построит variables, equations, units коэффициентов и topology.
+Явные d(stock)/dt с поддерживаемыми DSL-выражениями преобразуй в polynomial_ode, включая
+несколько связанных stocks и нелинейные terms; не возвращай components=[] из-за их сложности.
+Запись min(stock/service_time,max_service) означает queue, а third-order material response —
+delay, если заданы его параметры. Не используй имя d(stock)/dt как id переменной.
 Не выдумывай новый kind. Если механизм не покрыт, верни components=[] для обычного pipeline.
 Если components непустой, задай time={unit, initial_time, final_time, time_step, saveper};
 возьми horizon и unit из запроса. Выбирай time_step не больше четверти самой маленькой
@@ -39,25 +75,39 @@ time constant. saveper должен быть целым кратным time_step
 - conditional_inflow: внешний rate поступает в stock с start_time до end_time; outflow —
   stock*elimination_rate. Подходит для infusion с последующей элиминацией. Укажи stock,
   inflow, outflow, rate, start_time, end_time, elimination_rate, initial, units, time_unit.
+  Этот component уже задаёт обе скорости: не добавляй polynomial_ode для того же stock.
 - queue: arrivals добавляет arrival_rate, service=min(max(stock,0)/service_time,max_service).
   Для конечного входного потока задай arrival_start_time и arrival_end_time, иначе последний=null.
   Укажи stock, arrivals, service, service_time, max_service, arrival_rate, initial, units,
-  time_unit. Не добавляй отдельный first_order outflow для той же очереди.
+  time_unit. Не добавляй отдельный first_order outflow, scheduled_flow или другую queue для
+  того же процесса. Не создавай дополнительный serviced stock без явного требования пользователя.
+  Для одной очереди не добавляй polynomial_ode со вторым representation того же backlog или
+  отдельным удалением его items. Тернарный `condition ? a : b` не поддерживается: используй
+  if_then_else или typed component.
 - scheduled_flow: один внешний приток или расход, rate меняется на rate_after в change_time.
-  source/target — stock или cloud:<id>, хотя бы один stock; initial_source, initial_target,
-  source_units и target_units одинаковы, time_unit задан. Для разряда source=stock,
-  target=cloud:sink. Не заменяй его двумя conditional_inflow с одинаковым stock.
+  Для такого переключения внешней скорости не используй polynomial_ode с if/min и не делай
+  rate или change_time отдельными stocks. source/target — stock или cloud:<id>, хотя бы один
+  stock; initial_source, initial_target, source_units и target_units одинаковы, time_unit задан.
+  Для разряда source=stock, target=cloud:sink и оба rate неотрицательны.
+  Для явно signed net flow в stock используй source=cloud:net_source, target=stock и сохраняй
+  отрицательный rate без замены нулём или max. Не заменяй его двумя conditional_inflow с
+  одинаковым stock.
 - delay: третье транспортное запаздывание input_rate с delay_time и явным initial_delayed_rate;
   consumption_time задаёт последующий first-order расход, либо null для нулевого расхода.
   input_rate и input_rate_after — только числа из описания, не symbolic ids; rate_change_time
   задаёт изменение входа, иначе оба optional-поля null. Укажи stock, inflow, outflow,
-  initial_stock, stock_units, time_unit. Не добавляй scheduled_flow для входа delay.
+  initial_stock, stock_units, time_unit. stock — единственный terminal accumulator, получающий
+  delayed inflow и теряющий consumption; не создавай отдельные in_transit и terminal stocks,
+  polynomial_ode для terminal consumption или scheduled_flow для входа delay. Third-order уже
+  содержит три внутренние стадии: не разбивай один material response на несколько delay components.
 - polynomial_ode: stock с initial, units, time_unit, terms и parameters. Каждый term содержит
   coefficient (число или id parameter), expression БЕЗ coefficient и без общего знака,
   sign=1|-1 и name. Например -4*position — coefficient=4, expression="position", sign=-1.
   Сумма terms задаёт derivative, не включай её в expression. Ссылки на coefficient внутри
   того же expression запрещены. Составляй несколько terms только для суммы верхнего уровня;
   сумму, умножаемую на общий coefficient, всегда сохраняй одним expression.
+  Отрицательный вклад задавай как положительный coefficient и sign=-1, а не как отрицательный
+  coefficient и sign=1: двойной отрицательный знак меняет направление процесса.
   parameters: id, value, role=rate|threshold|scale, units=null или base units. Для threshold
   без units builder возьмёт units текущего stock; scale без units — dimensionless; rate без
   units — 1/time, кроме coefficient, чьи units выводятся из stock/time - expression units.
@@ -67,6 +117,9 @@ time constant. saveper должен быть целым кратным time_step
 Все ids — ASCII snake_case, уникальные внутри модели. В каскаде первого порядка можно
 повторить промежуточный stock только с теми же initial и units: builder объединит его.
 Для каждого ODE stock создавай ровно один component и перечисляй все его terms внутри.
+Другой stock никогда не является ComponentParameter: для d(position)/dt=velocity используй
+coefficient=1, expression="velocity" и parameters=[]; не создавай parameter с id="velocity".
+Для parameter.role допустимы только rate, threshold и scale, но не названия единиц или stocks.
 Не копируй числа из этих правил: бери параметры из запроса. Для выбранных иллюстративных
 значений добавь краткие assumptions с source="llm_inferred" и непустым value.
 

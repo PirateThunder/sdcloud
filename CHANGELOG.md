@@ -9,6 +9,96 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.6.0 — 2026-11-08
+
+- **Opt-in dynamic local LLM routing**: добавлен `pipeline/routing.py` для выбора 8B/30B по
+  свободной VRAM при каждой генерации. Модель закрепляется на весь pipeline; transient provider
+  errors повторяют всю операцию на другой модели, schema/semantic errors не скрываются. Маршрут,
+  VRAM и failed attempts записываются в trace/manifest; старый provider без
+  `LLM_DYNAMIC_ROUTING=1` не изменён. Добавлены SSH/nvidia-smi monitor, optional explicit cloud
+  fallback, Compose overlay и 26 unit/integration tests. GPU-проверка RTX 5090 выполняется
+  последовательно: dual-профиль 30B VL AWQ + 8B GGUF на 24 GB не подтверждён, первая попытка
+  30B с memory utilization 0.73 не оставила KV-cache. Реальные последовательные smoke-тесты
+  подтвердили 30B vLLM (232,599 с) и 8B GGUF через llama.cpp CUDA (44,806 с), обе с
+  `validation=passed` и зафиксированным fallback. High-VRAM smoke также выбрал large напрямую
+  (`free=3540 MiB`, `threshold=3000 MiB`, `fallback=false`). vLLM 0.30.0 не поддерживает GGUF loader;
+  добавлены per-target output limits, llama.cpp Compose service и route в сохранённой chat-модели.
+- **Vensim `:EXCEPT:` и arrays**: добавлены wildcard и multiple exceptions, слияние
+  complementary subranges, dimension aliases, явные partial-array projections и
+  element-specific stock derivatives. Частичные определения не заполняются фиктивными нулями.
+  Одинаковые dimensions объединяются только если они не являются независимыми осями одной
+  переменной. Исправлены mixed fixed/wildcard indices и multiword numeric indices.
+- **Bounded Vensim macros**: expression/stock macros, локальные уравнения и вложенные вызовы
+  разворачиваются до основного parser. Циклы, рекурсия, неверное число аргументов и чрезмерное
+  расширение отклоняются; arbitrary code/include не появляются.
+- **Внешняя совместимость**: SDXorg — **63 imported, 63 simulated, 62 matched** из 148
+  reference-моделей при прежних `rtol=1e-3`, `atol=1e-5`; прежние совпадения сохранены.
+  Для Rössler независимый Euler float32 дал 0 ошибок в 9603 stock-точках; float64 сохраняет
+  52 точки возле нуля вне допуска. Это подтверждённая разница reference precision, а не
+  основание менять основной solver или допуски.
+- **Robustness**: добавлены 17 новых русских/английских и negative cases. PDE/Wiener noise
+  отклоняются до LLM-запроса, обратный явный time interval проверяется, zero-equilibrium
+  снова допускается без отмены запрета vacuous self-decay, явные shared ODE units имеют
+  приоритет над физическими догадками LLM. Отчёт разделяет model и expected-error outcomes.
+- **LLM compatibility**: generic `time unit(s)` нормализуется в `time`; строковые units
+  компонентов и параметров проходят через существующий strict units parser (`"1/time"` →
+  `{"time": -1}`), malformed типы по-прежнему отклоняются.
+- **Controlled evaluation framework**: `benchmark.py --mode ablation` сравнивает direct,
+  typed pipeline без repair и полный pipeline на одних `prompt_id/run` и одном LLM.
+  Direct не использует ModelBrief, ComponentPlan, patterns, RAG или repair; все режимы
+  сохраняют безопасный AST, validation, simulation и exports. Добавлены frozen protocol
+  и corpus/pipeline/protocol hashes, LLM/seed metadata и protocol deviations. Повторы используют
+  парные `base_seed + run_index`: seed совпадает между arms и моделями, но не дублируется между runs.
+- **Paired statistics и expert review**: exact McNemar, prompt-cluster bootstrap CI,
+  Holm correction, offline `evaluate.py compare|export|agreement`. Blind expert artifacts
+  не раскрывают режим и служебные метаданные; private answer key отделён. Cohen's kappa
+  рассчитывается до adjudication, no_model по умолчанию не завышает agreement.
+  Реальный blind-прогон Ministral 8B выполнен; независимая экспертная разметка ещё не проводилась.
+- **8B evaluation**: Qwen3-8B-Q4_K_M на RTX 5090, 70 cases, один pipeline
+  `62695337cf3f49127909d0cb567fa98e95d37faf98c9df854ec169f851d37f91`.
+  Acceptance2 — 70,83% по всем метрикам, acceptance3 — 79,17%, acceptance4 — 61,11%;
+  composition — 100% executable/semantic и 75% behavior. Общий результат — 72,86%
+  executable/semantic и 71,43% behavior, repair rate 82,86%, average 64,683 с.
+  Targets 90/85/85 не достигнуты: malformed JSON, truncation и component errors сохраняются.
+  Это не подтверждённая замена 30B. Пик мониторинга — 80 °C и 176,91 Вт;
+  после остановки vLLM — 225 MiB. 14B, новые live robustness/long-context отложены;
+  LoRA/fine-tuning не запускались.
+- **OpenRouter 8B hardening**: baseline `qwen/qwen3-vl-8b-instruct` (Parasail bf16) на
+  acceptance2–4 — 86,36% executable/semantic/behavior (19/22). Исправлены stock/parameter
+  shadowing до schema validation, разбор явных ODE с финальной точкой и русскими запятыми,
+  substring false positives в pattern selector, dimensional inference numeric literals,
+  знакопеременный scheduled net inflow и cloud/variable collisions. Добавлены экспоненциальный
+  retry для временных provider errors и отдельный infrastructure flag без исключения таких
+  случаев из знаменателя. GPU, 14B и RAG в этих прогонах не используются.
+- **8B provider comparison и composition**: Llama-3.1-8B (CoreWeave bf16) дала
+  36,36% executable/semantic и 31,82% behavior, со schema — 59,09% и 54,55%.
+  `mistralai/ministral-8b-2512` (официальный Mistral endpoint) на начальном acceptance2–4
+  достигла 90,91% executable/semantic и 86,36% behavior. Component Schema включается opt-in;
+  добавлены canonical time units, идентичные shared ODE parameters, conservative unit fallback,
+  delay disconnected-terminal/vacuous-flow и duplicate-input validation, а также точная
+  нормализация эквивалентных terminal adapters. Метрики разных моделей не смешиваются.
+- **Pattern shortcut и numerical accuracy**: opt-in `LLM_PATTERN_SHORTCUT=1` использует
+  validated archetype без LLM только для qualitative/default descriptions; пользовательские
+  числа и конфликтующие временные/физические единицы отключают shortcut. Сложные SIRS/student
+  patterns получают canonical flows/auxiliaries без потери пользовательских constants. Delay
+  сохраняет third order через `delay_time/4`, а self-decay использует horizon-aware Euler step.
+  Добавлены opt-in metadata, redundant-literal parameter cleanup и queue composition guidance.
+  Inferred integration ограничен 10000 внутренних шагов на модель.
+- **Frozen 8B regression**: pipeline `a5fc3038a94ea8860b80363e3f3e4d190b4bec339312d74d01f5af5d0a7bb8ff`.
+  Acceptance2 — 100%, acceptance3 — 79,17%, acceptance4 — 100%; сводно 61/66 = 92,42%
+  executable/semantic/behavior. Stress 28 и original 26 — 100% по всем метрикам.
+  Acceptance3 явно отмечен как слабый набор, сводные targets 90/85/85 выполнены.
+  Также исправлено ложное распознавание `часть` как `час` в time-unit guard.
+- **Blind ablation на frozen Ministral 8B**: 24 prompts × 3 на pipeline
+  `a5fc3038a94ea8860b80363e3f3e4d190b4bec339312d74d01f5af5d0a7bb8ff`.
+  Direct — 2,78%; typed_no_repair — 95,83% executable и 90,28% semantic/behavior;
+  full — 97,22% executable и 90,28% semantic/behavior. Full против direct: +94,44 п.п.
+  executable и +87,5 п.п. semantic/behavior; full против typed_no_repair: +1,39 п.п.
+  executable и 0 п.п. semantic/behavior, p=1,0. Экспортированы 216 annotation tasks и
+  141 model artifact; независимая экспертная разметка ещё не проводилась.
+- **Проверки**: полный offline suite — 318 core, 20 backend и 12 frontend tests,
+  2/2 browser E2E; Ruff, Biome, TypeScript, lock-проверки и production frontend build проходят.
+
 ## 0.5.0 — 2026-11-06
 
 - **Structural resilience**: второй brief repair больше не получает malformed response в качестве

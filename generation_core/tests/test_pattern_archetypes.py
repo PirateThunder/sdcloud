@@ -23,6 +23,22 @@ def test_archetype_selection_and_validation(expected, prompt):
     assert not [issue for issue in pattern.document.validation.issues if issue.severity == "error"]
 
 
+def test_selector_does_not_match_substrings_or_replace_explicit_topology():
+    assert select_pattern("Скорость движения задана явно, без дополнительных процессов.") is None
+    assert select_pattern("Model one stock with a prescribed outflow.") is None
+    description = (
+        "Two colonies begin with alpha=30 population and beta=20 population. "
+        "Use d(alpha)/dt = alpha*(0.4-0.005*alpha-0.002*beta) and "
+        "d(beta)/dt = beta*(0.3-0.001*alpha-0.003*beta)."
+    )
+    assert select_pattern(description) is None
+    predator = (
+        "Predator and prey populations start at x=10 and y=2. "
+        "Use dx/dt = x-0.1*x*y and dy/dt = 0.01*x*y-0.2*y."
+    )
+    assert select_pattern(predator).id == "predator_prey"
+
+
 def test_predator_equilibrium_is_valid_but_does_not_satisfy_dynamic_behavior():
     from pipeline.ir import lit
     from pipeline.semantics import semantic_issues

@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from pipeline.components import (
@@ -226,6 +228,19 @@ def test_inferred_time_step_uses_the_nearest_smaller_horizon_divisor():
     assert settings.time_step <= 0.55
     assert settings.saveper == settings.time_step
     assert settings.final_time / settings.time_step == pytest.approx(110)
+
+
+def test_generic_time_unit_is_normalized_without_touching_physical_units():
+    generic = normalize_inferred_time(
+        TimeSettings(unit="time units", final_time=100, time_step=0.1, saveper=0.1),
+        "Use a 100 time-unit horizon.",
+    )
+    assert generic.unit == "time"
+    physical = normalize_inferred_time(
+        TimeSettings(unit="minute", final_time=100, time_step=0.1, saveper=0.1),
+        "Use a 100 minute horizon.",
+    )
+    assert physical.unit == "minute"
 
 
 def test_explicit_time_step_and_saveper_are_not_overridden():
@@ -495,3 +510,298 @@ def test_delay_allows_an_independent_outflow_with_a_different_rate():
     result = simulate_model(model, SimulationParameters(integration_method="euler"))
     assert result.variables["parts"][-1] > 0
     assert result.variables["recycling"][-1] > 0
+
+
+def test_component_unit_strings_use_the_strict_units_parser():
+    from pydantic import ValidationError
+
+    normalized = normalize_component_payload({
+        "components": [{
+            "kind": "polynomial_ode",
+            "stock": "u",
+            "initial": 0,
+            "units": "state",
+            "time_unit": "time",
+            "terms": [{"coefficient": 1, "expression": "u", "sign": 1}],
+            "parameters": [{"id": "rate", "value": 0.3, "units": "1/time"}],
+        }]
+    })
+    plan = ComponentPlan.model_validate(normalized)
+    assert plan.components[0].units == {"state": 1}
+    assert plan.components[0].parameters[0].units == {"time": -1}
+    normalized["components"][0]["parameters"][0]["units"] = ["time"]
+    with pytest.raises(ValidationError):
+        ComponentPlan.model_validate(normalized)
+
+
+def test_time_unit_aliases_are_consistent_across_components_and_settings():
+    assert TimeSettings(unit="seconds").unit == "second"
+    component = {
+        "kind": "scheduled_flow",
+        "source": "water_reserve",
+        "target": "cloud:sink",
+        "flow": "consumption",
+        "rate": 10,
+        "rate_after": 25,
+        "change_time": 3,
+        "initial_source": 800,
+        "initial_target": 0,
+        "source_units": {"litre": 1},
+        "target_units": None,
+        "time_unit": "seconds",
+    }
+    normalized = normalize_component_payload({"components": [component]})
+    assert normalized["components"][0]["time_unit"] == "second"
+    model = document([component], final_time=20, unit="second")
+    result = simulate_model(model, adaptive())
+    assert result.variables["water_reserve"][-1] == pytest.approx(345, abs=0.01)
+
+
+def test_delay_rejects_a_disconnected_polynomial_terminal_stock():
+    components = [
+        {
+            "kind": "delay",
+            "stock": "items_in_transit",
+            "inflow": "transport",
+            "outflow": "consumption",
+            "input_rate": 5,
+            "delay_time": 2,
+            "initial_stock": 0,
+            "initial_delayed_rate": 0,
+            "stock_units": {"item": 1},
+            "time_unit": "minute",
+            "consumption_time": 2,
+        },
+        {
+            "kind": "polynomial_ode",
+            "stock": "terminal_items",
+            "initial": 1,
+            "units": {"item": 1},
+            "time_unit": "minute",
+            "terms": [{"coefficient": 0.1, "expression": "terminal_items", "sign": -1}],
+            "parameters": [],
+        },
+    ]
+    with pytest.raises(ModelValidationError, match="delay terminal is disconnected"):
+        build_components(components, TimeSettings(unit="minute"))
+
+
+def test_delay_rejects_a_direct_scheduled_input_bypass():
+    components = [
+        delay_with_additional_outflow(2)[0],
+        {
+            "kind": "scheduled_flow",
+            "source": "cloud:external",
+            "target": "parts",
+            "flow": "direct_supply",
+            "rate": 1,
+            "rate_after": 2,
+            "change_time": 1,
+            "initial_target": 0,
+            "source_units": None,
+            "target_units": {"item": 1},
+            "time_unit": "second",
+        },
+    ]
+    with pytest.raises(ModelValidationError, match="scheduled_flow bypasses delay input"):
+        build_components(components, TimeSettings(unit="second"))
+
+
+def test_identical_scheduled_delay_input_is_deduplicated():
+    scheduled = {
+        "kind": "scheduled_flow",
+        "source": "cloud:external",
+        "target": "parts",
+        "flow": "direct_supply",
+        "rate": 10,
+        "rate_after": 20,
+        "change_time": 5,
+        "initial_target": 0,
+        "source_units": None,
+        "target_units": {"item": 1},
+        "time_unit": "second",
+    }
+    normalized = normalize_component_payload({
+        "components": [delay_with_additional_outflow(2)[0], scheduled]
+    })
+    assert len(normalized["components"]) == 1
+    assert normalized["components"][0]["kind"] == "delay"
+
+
+def test_exact_polynomial_delay_terminal_is_normalized_to_one_delay():
+    ode = {
+        "kind": "polynomial_ode",
+        "stock": "terminal_items",
+        "initial": 0,
+        "units": {"item": 1},
+        "time_unit": "second",
+        "terms": [
+            {"coefficient": 1, "expression": "consumption", "sign": 1},
+            {"coefficient": 1, "expression": "terminal_items / 2", "sign": -1},
+        ],
+        "parameters": [],
+    }
+    normalized = normalize_component_payload({
+        "components": [delay_with_additional_outflow(2)[0], ode]
+    })
+    assert len(normalized["components"]) == 1
+    assert normalized["components"][0]["stock"] == "terminal_items"
+    assert normalized["components"][0]["initial_stock"] == 0
+    model = document(normalized["components"], final_time=20)
+    assert [item.id for item in model.variables if item.kind == "stock"] == ["terminal_items"]
+
+
+def test_zero_input_and_initial_state_delay_is_rejected_as_vacuous():
+    component = {
+        "kind": "delay",
+        "stock": "empty_buffer",
+        "inflow": "transport",
+        "outflow": "consumption",
+        "input_rate": 0,
+        "delay_time": 2,
+        "initial_stock": 0,
+        "initial_delayed_rate": 0,
+        "stock_units": {"item": 1},
+        "time_unit": "minute",
+        "consumption_time": None,
+    }
+    with pytest.raises(ModelValidationError, match="vacuous delay"):
+        build_components([component], TimeSettings(unit="minute"))
+
+
+def test_inferred_delay_step_preserves_third_order_and_explicit_user_step():
+    delay = {**delay_with_additional_outflow(2)[0], "delay_time": 2, "consumption_time": None}
+    components = ComponentPlan.model_validate({"components": [delay]}).components
+    settings = TimeSettings(unit="second", final_time=20, time_step=1, saveper=1)
+    normalized = normalize_inferred_time(settings, "Use a 20 second horizon.", components)
+    assert normalized.time_step == 0.5
+    assert 3 * normalized.time_step < delay["delay_time"]
+    assert normalized.saveper == normalized.time_step
+    explicit = normalize_inferred_time(
+        settings,
+        "Use a 20 second horizon and time step=1.",
+        components,
+    )
+    assert explicit.time_step == 1
+
+
+def test_self_decay_inferred_step_limits_euler_error_without_changing_explicit_step():
+    ode = {
+        "kind": "polynomial_ode",
+        "stock": "difference",
+        "initial": 50,
+        "units": {"heat_unit": 1},
+        "time_unit": "minute",
+        "terms": [{"coefficient": -0.15, "expression": "difference", "sign": 1}],
+        "parameters": [],
+    }
+    components = ComponentPlan.model_validate({"components": [ode]}).components
+    settings = TimeSettings(unit="minute", final_time=30, time_step=0.25, saveper=0.25)
+    normalized = normalize_inferred_time(settings, "Use a 30 minute horizon.", components)
+    assert 0 < normalized.time_step <= 1 / 33.75
+    assert normalized.time_step * 0.15 / 2 <= 0.01
+    model = document([ode], final_time=30, time_step=normalized.time_step, unit="minute")
+    from pipeline.schemas import SimulationParameters
+
+    result = simulate_model(model, SimulationParameters(integration_method="euler"))
+    assert result.variables["difference"][-1] == pytest.approx(50 * math.exp(-4.5), rel=0.02)
+    explicit = normalize_inferred_time(settings, "Use time step=0.25.", components)
+    assert explicit.time_step == 0.25
+
+
+def test_accuracy_cap_limits_internal_steps_on_long_horizons():
+    ode = {
+        "kind": "polynomial_ode",
+        "stock": "population",
+        "initial": 10,
+        "units": {"person": 1},
+        "time_unit": "year",
+        "terms": [{"coefficient": 1, "expression": "population", "sign": -1}],
+        "parameters": [],
+    }
+    components = ComponentPlan.model_validate({"components": [ode]}).components
+    settings = TimeSettings(unit="year", final_time=100, time_step=0.25, saveper=0.25)
+    normalized = normalize_inferred_time(settings, "Use a 100 year horizon.", components)
+    assert normalized.time_step == pytest.approx(0.01)
+    assert normalized.final_time / normalized.time_step <= 10_000
+
+
+def test_affine_self_expression_also_limits_inferred_step():
+    ode = {
+        "kind": "polynomial_ode",
+        "stock": "skill",
+        "initial": 0,
+        "units": {"skill_unit": 1},
+        "time_unit": "minute",
+        "terms": [{"coefficient": 0.2, "expression": "100-skill", "sign": 1}],
+        "parameters": [],
+    }
+    components = ComponentPlan.model_validate({"components": [ode]}).components
+    settings = TimeSettings(unit="minute", final_time=40, time_step=10, saveper=10)
+    normalized = normalize_inferred_time(settings, "Use a 40 minute horizon.", components)
+    assert normalized.time_step == pytest.approx(0.0125)
+    model = document([ode], final_time=40, time_step=normalized.time_step, unit="minute")
+    result = simulate_model(model, adaptive())
+    series = result.variables["skill"]
+    tail = series[len(series) * 9 // 10 :]
+    assert max(abs(value - 100) for value in tail) < 0.1
+
+
+def test_empty_component_time_units_use_only_the_brief_default():
+    from pydantic import ValidationError
+
+    payload = {
+        "components": [
+            {
+                "kind": "polynomial_ode",
+                "stock": "state",
+                "initial": 1,
+                "units": {"state": 1},
+                "time_unit": "",
+                "terms": [{"coefficient": 1, "expression": "state"}],
+                "parameters": [],
+            }
+        ],
+        "time": {"unit": "", "initial_time": 0, "final_time": 10, "time_step": 0.1, "saveper": 0.1},
+        "assumptions": [],
+    }
+    normalized = normalize_component_payload(payload, default_time_unit="time")
+    assert normalized["time"]["unit"] == "time"
+    assert normalized["components"][0]["time_unit"] == "time"
+    ComponentPlan.model_validate(normalized)
+    with pytest.raises(ValidationError):
+        ComponentPlan.model_validate(normalize_component_payload(payload))
+
+
+def test_coupled_linear_ode_step_is_limited_by_nested_coefficients():
+    components_data = [
+        {
+            "kind": "polynomial_ode",
+            "stock": "s",
+            "initial": 2,
+            "units": {"state": 1},
+            "time_unit": "time",
+            "terms": [{"coefficient": 1, "expression": "r"}],
+            "parameters": [],
+        },
+        {
+            "kind": "polynomial_ode",
+            "stock": "r",
+            "initial": 0,
+            "units": {"state": 1},
+            "time_unit": "time",
+            "terms": [{"coefficient": 0.3, "expression": "-16*s-0.4*r"}],
+            "parameters": [],
+        },
+    ]
+    components = ComponentPlan.model_validate({"components": components_data}).components
+    settings = TimeSettings(unit="time", final_time=50, time_step=12.5, saveper=12.5)
+    normalized = normalize_inferred_time(settings, "Use a 50 time-unit horizon.", components)
+    assert normalized.time_step == pytest.approx(0.005)
+    model = document(components_data, final_time=50, time_step=normalized.time_step, unit="time")
+    from pipeline.schemas import SimulationParameters
+
+    result = simulate_model(model, SimulationParameters(integration_method="euler"))
+    series = result.variables["s"]
+    assert max(abs(value) for value in series) < 10
+    assert sum(left * right < 0 for left, right in zip(series, series[1:], strict=False)) >= 6

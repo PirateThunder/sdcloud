@@ -774,7 +774,7 @@ _METADATA = {
     ),
     "inventory": (
         "Inventory and backlog management",
-        ("inventory", "stock", "warehouse", "backlog", "запас", "склад", "заказ"),
+        ("inventory", "warehouse", "backlog", "запас", "склад", "заказ"),
     ),
     "workforce": (
         "Hiring and workforce maturation",
@@ -904,12 +904,28 @@ def get_pattern(pattern_id: str) -> Pattern:
 
 
 def select_pattern(description: str) -> Pattern | None:
-    text = description.lower()
+    import re
+
+    from .ode_equivalence import explicit_ode_expressions
+
+    text = description.casefold()
     candidates = []
     for pattern_id, (_, tags) in _METADATA.items():
-        score = sum(len(tag) for tag in tags if tag in text)
+        score = sum(
+            len(tag)
+            for tag in tags
+            if re.search(rf"(?<![\w]){re.escape(tag)}", text)
+        )
         if score:
             candidates.append((score, pattern_id))
+    explicit_stocks = set(explicit_ode_expressions(description))
+    if len(explicit_stocks) > 1:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if sum(item.kind == "stock" for item in get_pattern(candidate[1]).document.variables)
+            == len(explicit_stocks)
+        ]
     if not candidates:
         return None
     return get_pattern(max(candidates)[1])

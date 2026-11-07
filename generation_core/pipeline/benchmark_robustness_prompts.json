@@ -1,0 +1,105 @@
+[
+  {
+    "id": "robust_ru_heat_exchanger",
+    "description": "Создай модель теплообменника. Начальная температура heat_exchanger=90 °C, температура среды ambient_temperature=20 °C. Охлаждение первого порядка: d(heat_exchanger)/dt = -0.12 * (heat_exchanger - ambient_temperature), время в minute, горизонт 40 minute. Используй отдельный coefficient=0.12 minute^-1.",
+    "expected_pattern": "teacup_cooling",
+    "expected_behavior": {"kind": "monotonic", "variable": "heat_exchanger", "direction": "decreasing"}
+  },
+  {
+    "id": "robust_ru_volunteer_training",
+    "description": "В волонтёрской школе novice=40 person, mentor=0 person. Новички становятся наставниками с coefficient=0.2 week^-1, наставники уходят с coefficient=0.04 week^-1. Новых новичков нет. Горизонт 60 week. Нужны две накопительные переменные и переход между ними.",
+    "expected_pattern": "workforce",
+    "expected_behavior": {"kind": "cascade", "variable": "mentor", "after": 3}
+  },
+  {
+    "id": "robust_ru_battery_switching",
+    "description": "Аккумулятор имеет battery_charge=90 Wh. Нагрузка составляет 15 W до time=2 hour, затем 30 W. Построй одну накопительную переменную и один расход во внешнюю среду, горизонт 4 hour. Не добавляй зарядку.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "battery_charge", "at": 2, "after": 4, "relation": "below", "value": 40}
+  },
+  {
+    "id": "robust_ru_incubation_cascade",
+    "description": "В лаборатории incubating_samples=50 item, processed_samples=0 item. Образцы переходят из первой категории во вторую с coefficient=0.15 day^-1, обработанные образцы выбывают с coefficient=0.03 day^-1. Поступлений нет. Горизонт 70 day.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "cascade", "variable": "processed_samples", "after": 4}
+  },
+  {
+    "id": "robust_en_damped_resonator",
+    "description": "A resonator starts with displacement=1.5 and velocity=0. Use d(displacement)/dt = velocity and d(velocity)/dt = 0.4*(-9*displacement - 0.3*velocity). Both states use unit state and time has unit time. Use named scale constants and a 50 time-unit horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "displacement", "minimum": 4}
+  },
+  {
+    "id": "robust_en_nutrient_pulse",
+    "description": "A bioreactor starts with nutrient_mass=4 gram. A pump supplies 6 gram/minute during the first 1.5 minute and then stops. Natural removal is first order with coefficient=0.2 minute^-1. Use a 15 minute horizon and gram and minute units.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "nutrient_mass", "at": 1.5, "after": 15, "relation": "decrease"}
+  },
+  {
+    "id": "robust_en_ticket_capacity",
+    "description": "A support desk starts with tickets=20. New tickets arrive at 50 ticket/minute for the first 1 minute and then stop. Completion follows min(tickets / service_time, max_service), with service_time=0.2 minute and max_service=18 ticket/minute. Tickets must stay nonnegative. Use a 15 minute horizon and a nonnegative service policy.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "tickets", "value": 0, "tolerance": 0.01, "nonnegative": true}
+  },
+  {
+    "id": "robust_en_material_delay",
+    "description": "A packing line receives parcels through a third-order material response with transport_time=1.5 minute. The external parcel_rate is 0 item/minute until time=2 minute and 12 item/minute afterwards. The response starts empty with initial output rate=0 item/minute. Terminal consumption has time constant=3 minute and parcels starts at 0 item. Use a 20 minute horizon.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "delayed_response", "variable": "parcels", "aliases": ["Parcels_in_transit"], "at": 1, "before_max": 0, "after_min": 6}
+  },
+  {
+    "id": "robust_en_six_stage_network",
+    "description": "A six-stage treatment network uses stocks stage_0=120, stage_1=0, stage_2=0, stage_3=0, stage_4=0, stage_5=0, all in item. For i from 0 to 4, material transfers from stage_i to stage_(i+1) with coefficient=0.15 hour^-1. Stage_5 is removed with coefficient=0.05 hour^-1. There are no other inputs. Use a 70 hour horizon and item and hour units.",
+    "expected_pattern": "inventory",
+    "expected_behavior": {"kind": "cascade", "variable": "stage_5", "after": 4}
+  },
+  {
+    "id": "robust_en_two_well_relaxation",
+    "description": "A dimensionless mechanism starts with position=1.5 and speed=0. Use d(position)/dt = speed and d(speed)/dt = 0.3*(position-position^3-0.2*speed). Both states use unit state, model time has unit time, and the horizon is 60. Use named scale constants for dimensional consistency.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "sign_changes", "variable": "position", "minimum": 2}
+  },
+  {
+    "id": "robust_mixed_language_tank",
+    "description": "Model a water tank / смоделируй резервуар: water_volume=300 litre. Outflow is 5 litre/second until time=2 second, then increases to 20 litre/second. Используй один stock и один outflow, горизонт 10 second, no inflow.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "event_change", "variable": "water_volume", "at": 2, "after": 10, "relation": "below", "value": 220}
+  },
+  {
+    "id": "robust_zero_equilibrium",
+    "description": "A sealed reservoir starts with level=0 litre. There is no inflow and no outflow. Use d(level)/dt=0, a 10 second horizon, litre and second units. Do not invent sources, sinks or forcing.",
+    "expected_pattern": null,
+    "expected_behavior": {"kind": "steady_state", "variable": "level", "value": 0, "tolerance": 1e-9}
+  },
+  {
+    "id": "robust_contradictory_time",
+    "description": "Create a first-order cooling model with initial_time=10 minute and final_time=0 minute. Do not silently swap or extend the requested time bounds.",
+    "expected_pattern": null,
+    "expected_error": "final_time"
+  },
+  {
+    "id": "robust_incompatible_units",
+    "description": "A tank has water=100 litre and removal coefficient=0.2 minute^-1. Set model time unit to year and the horizon to 5 year. Do not silently convert the coefficient or change the stated time unit.",
+    "expected_pattern": null,
+    "expected_error": "units"
+  },
+  {
+    "id": "robust_missing_parameters",
+    "description": "Model the future of a village, but do not invent its initial population, birth rate, migration rate or time horizon. Every missing value must require confirmation.",
+    "expected_pattern": null,
+    "assumption_policy": "require_explicit",
+    "expected_error": "MISSING_PARAMETER"
+  },
+  {
+    "id": "robust_spatial_pde",
+    "description": "Solve the spatial heat equation ∂u/∂t = 0.2 * ∂²u/∂x² on a continuous rod. This must be a spatial partial differential equation, not a lumped ordinary differential equation.",
+    "expected_pattern": null,
+    "expected_error": "UNSUPPORTED_CAPABILITY"
+  },
+  {
+    "id": "robust_stochastic_differential",
+    "description": "Simulate the stochastic differential equation dX = -0.1*X*dt + 0.02*dW, where W is a Wiener process. Do not replace the stochastic term with a deterministic constant.",
+    "expected_pattern": null,
+    "expected_error": "UNSUPPORTED_CAPABILITY"
+  }
+]

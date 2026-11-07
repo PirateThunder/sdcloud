@@ -73,6 +73,19 @@ async def test_ode_guidance_is_used_only_without_pattern():
     assert "stock.derivative" not in llm.prompts["variables"]
 
 
+async def test_component_structured_output_is_opt_in(monkeypatch):
+    from pipeline.schemas import ComponentPlan
+
+    monkeypatch.setenv("LLM_COMPONENT_STRUCTURED_OUTPUT", "1")
+    llm = EarlyRepairLLM()
+    await generate_model(
+        GenerationRequest(description="Custom second-order dynamic system"),
+        llm,
+        max_repairs=0,
+    )
+    assert llm.schemas["components"] == ComponentPlan.model_json_schema()
+
+
 async def test_brief_schema_excludes_unused_component_definitions():
     from pipeline.llm import strict_json_schema
 
@@ -391,7 +404,7 @@ async def test_normalized_pattern_uses_validated_equations_without_llm_stage():
     from pipeline.schemas import ModelBrief
 
     pattern = get_pattern("van_der_pol_oscillator")
-    description = "Electronic Van der Pol oscillator with a relaxation limit cycle"
+    description = "Electronic Van der Pol oscillator with a relaxation limit cycle and mu=3.5"
     brief = ModelBrief(
         goal="Model a relaxation oscillator",
         boundaries=["Normalized circuit dynamics"],
@@ -423,6 +436,8 @@ async def test_normalized_pattern_uses_validated_equations_without_llm_stage():
         payload = item.model_dump(mode="json")
         if item.kind == "constant":
             payload["initial"] = payload["expression"]
+        if item.id == "mu":
+            payload["initial"] = 3.5
         if item.kind != "stock":
             payload["expression"] = None
         variables.append(payload)
@@ -444,8 +459,9 @@ async def test_normalized_pattern_uses_validated_equations_without_llm_stage():
     assert llm.calls == ["brief", "variables"]
     assert document.repair_attempts == 0
     assert document.pattern_id == pattern.id
-    assert [item.expression for item in document.variables if item.kind != "stock"] == [
-        item.expression for item in pattern.document.variables if item.kind != "stock"
+    assert next(item for item in document.variables if item.id == "mu").expression.value == 3.5
+    assert [item.expression for item in document.variables if item.kind in {"flow", "auxiliary"}] == [
+        item.expression for item in pattern.document.variables if item.kind in {"flow", "auxiliary"}
     ]
     assert document.assumptions[-1].source == "archetype"
     assert document.assumptions[-1].path == "equations"
@@ -948,3 +964,29 @@ def test_final_repair_uses_normalized_time_settings():
     repaired = _repair(document, payload, 1)
     assert repaired.time.time_step == document.time.time_step
     assert repaired.time.saveper == document.time.saveper
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Solve the partial differential equation ∂u/∂t = 0.2 * ∂²u/∂x²",
+        "Simulate dX = -0.1*X*dt + 0.02*dW with a Wiener process",
+    ],
+)
+async def test_unsupported_differential_models_fail_before_llm(description):
+    llm = EarlyRepairLLM()
+    with pytest.raises(ModelValidationError, match="UNSUPPORTED_CAPABILITY"):
+        await generate_model(GenerationRequest(description=description), llm)
+    assert llm.calls == []
+
+
+async def test_contradictory_explicit_time_bounds_fail_before_llm():
+    llm = EarlyRepairLLM()
+    with pytest.raises(ModelValidationError, match="final_time must be greater"):
+        await generate_model(
+            GenerationRequest(
+                description="Use initial_time=10 minute and final_time=0 minute without swapping them"
+            ),
+            llm,
+        )
+    assert llm.calls == []

@@ -534,3 +534,32 @@ async def test_steady_state_benchmark_does_not_require_dynamic(tmp_path):
     assert result["dynamic_rate"] == 0
     assert result["semantic_rate"] == 1
     assert result["behavior_rate"] == 1
+
+
+async def test_benchmark_expected_errors_have_a_separate_outcome_metric(tmp_path):
+    from pipeline.benchmark import run_benchmark
+    from pipeline.llm import FixtureLLM
+
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(json.dumps([
+        {
+            "id": "expected_rejection",
+            "description": "Reject this invalid request",
+            "expected_pattern": None,
+            "assumption_policy": "require_explicit",
+            "expected_error": "no response",
+        },
+        {
+            "id": "unexpected_model",
+            "description": "A rejection with another error is not enough",
+            "expected_pattern": None,
+            "expected_error": "MISSING_PARAMETER",
+        },
+    ]))
+    fixture = tmp_path / "empty.json"
+    fixture.write_text("{}")
+    result = await run_benchmark(FixtureLLM(fixture), prompts_path=prompts, max_repairs=0)
+    assert result["expected_error_cases"] == 2
+    assert result["outcome_rate"] == 0.5
+    assert [case["outcome_pass"] for case in result["results"]] == [True, False]
+    assert result["executable_rate"] == 0

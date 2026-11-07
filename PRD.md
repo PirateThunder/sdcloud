@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core, backend и frontend 0.5.0 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
+**Статус:** generation_core, backend и frontend 0.6.0 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -522,3 +522,29 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
 - Исходный OpenRouter 26×3: 94,87% executable/semantic/behavior. Confirmation v16: 95,83% executable, 95,83% semantic, 93,75% behavior. Validation v13: 100% по всем метрикам. Targets превышены на всех трёх corpus; targeted Lorenz после brief-subset исправления — 1/1 без repairs.
 - Локальная 30B (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, RTX 5090, concurrency=1): исходный 26×3 — 98,7% по всем метрикам; held-out 16×3 — 97,9% executable/semantic и 95,8% behavior. Pipeline hash обоих отчётов — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
 - Проверки: 143 core tests, 20 backend tests, 12 frontend tests, 2/2 browser E2E; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. Local quality gate пройден; production deployment не выполнялся.
+
+## 18. Opt-in dynamic 8B/30B local inference (Unreleased)
+
+- В `generation_core/pipeline/routing.py` добавлен динамический local router. При каждой новой
+  генерации он считывает свободную VRAM через `nvidia-smi` (локально или по SSH для WSL) и
+  выбирает large 30B при `free >= LLM_LARGE_MIN_FREE_MIB`, иначе small 8B. По умолчанию режим
+  выключен, а существующие `local`, `openrouter` и `fixture` providers не меняются.
+- Модель фиксируется на весь pipeline. Только transport/timeout и HTTP 408/409/425/429/5xx
+  разрешают повтор всей генерации на другом endpoint; schema, JSON и semantic errors не должны
+  исчезать из-за смены модели. Cloud fallback включается отдельным флагом и никогда не является
+  неявным. Маршрут, failed attempts, VRAM и итоговая модель фиксируются в trace и manifest.
+- Backend не импортирует router и не знает о VRAM: он вызывает прежний generation_core REST API.
+  Пользовательские версии модели и simulation contracts не изменяются. Реальная проверка на
+  RTX 5090 24 GB выявила, что текущая 30B VL AWQ занимает около 20,6 GiB после инициализации;
+  dual 30B+8B на этом GPU не считается подтверждённым и требует отдельной конфигурации.
+- Критерии приёмки этапа: default-off regression, unit/integration tests выбора и fallback,
+  реальные `/v1/models` и generation для обоих endpoints, явная фиксация ограничений dual mode.
+  Качество произвольных предметных областей этим этапом не переоценивается; прежние corpus
+  metrics относятся к зафиксированным отдельным model/pipeline конфигурациям.
+- Фактические проверки: 30B vLLM и 8B GGUF llama.cpp обе завершили dynamic generation с
+  `validation=passed` и экспортами; длительности 232,599 с и 44,806 с соответственно. В обоих
+  случаях transient failure первого endpoint привёл к повтору всей генерации на другом.
+  Артефакты — `generation_core/out/dynamic-large-route/` и
+  `generation_core/out/dynamic-small-route-v2/`. Для 8B успешный повтор использовал 4096 output
+  tokens после честно зафиксированного truncation при 2048. Dual residency на 24 GB не доказана;
+  dynamic mode остаётся opt-in, а не production default.

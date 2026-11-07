@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .units import canonical_units, format_units
+from .units import canonical_time_unit, canonical_units, format_units
 
 
 class ContractModel(BaseModel):
@@ -453,8 +453,8 @@ class ScheduledFlowSpec(ContractModel):
     source: str = Field(min_length=1, max_length=106)
     target: str = Field(min_length=1, max_length=106)
     flow: str = Field(pattern=NAME_PATTERN, max_length=100)
-    rate: float = Field(ge=0.0)
-    rate_after: float = Field(ge=0.0)
+    rate: float
+    rate_after: float
     change_time: float = Field(ge=0.0)
     initial_source: float = 0.0
     initial_target: float = 0.0
@@ -464,6 +464,8 @@ class ScheduledFlowSpec(ContractModel):
 
     @model_validator(mode="after")
     def check_flow(self) -> ScheduledFlowSpec:
+        if not self.source.startswith("cloud:") and (self.rate < 0 or self.rate_after < 0):
+            raise ValueError("negative scheduled rate requires a net inflow from cloud to stock")
         if self.source.startswith("cloud:") and self.target.startswith("cloud:"):
             raise ValueError("scheduled_flow must connect at least one stock")
         if self.source.removeprefix("cloud:") == self.target.removeprefix("cloud:"):
@@ -519,6 +521,11 @@ class TimeSettings(ContractModel):
     final_time: float = 100.0
     time_step: float = Field(default=0.25, gt=0.0)
     saveper: float = Field(default=0.25, gt=0.0)
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def normalize_unit(cls, value):
+        return canonical_time_unit(value) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def check_horizon(self) -> TimeSettings:

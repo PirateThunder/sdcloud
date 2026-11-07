@@ -1,6 +1,6 @@
 [project]
 name = "sdcloud-generation-core"
-version = "0.5.0"
+version = "0.6.0"
 description = "CLI-first system dynamics generation and simulation engine"
 requires-python = ">=3.13,<3.14"
 dependencies = [

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,13 +13,18 @@ from pydantic import TypeAdapter, ValidationError
 
 from .codegen import export_vensim, generate_python_code
 from .components import build_components, normalize_component_payload, normalize_inferred_time
+from .description_scope import validate_description_scope
 from .exceptions import LLMResponseError, ModelValidationError
 from .expression_parser import normalize_expression
 from .formats import export_xmile
 from .io import write_json_atomic, write_stage
 from .ir import dependencies, ref, walk
-from .llm import LLMClient
-from .ode_equivalence import apply_explicit_odes, validate_explicit_odes
+from .llm import LLMClient, _flag
+from .ode_equivalence import (
+    apply_explicit_odes,
+    normalize_explicit_ode_payload,
+    validate_explicit_odes,
+)
 from .pattern_library import pattern_prompt, select_pattern
 from .prompts import (
     BRIEF_REPAIR_PROMPT,
@@ -362,12 +368,37 @@ def _allows_monetary_budget(pattern, description: str) -> bool:
     )
 
 
-def _requires_normalized_pattern(pattern, description: str) -> bool:
-    if pattern is None or pattern.id not in {
+def _pattern_time_conflict(pattern, description: str) -> bool:
+    groups = {
+        "day": r"days?|день|дня|дней|дню|дне|днём",
+        "week": r"weeks?|недел",
+        "month": r"months?|месяц",
+        "year": r"years?|год",
+        "hour": r"hours?|час(?:а|ов|ам|ами|ах|е|у|ом)?(?![\w])",
+        "minute": r"minutes?|минут",
+        "second": r"seconds?|секунд",
+    }
+    for unit, stems in groups.items():
+        if unit == pattern.document.time.unit:
+            continue
+        if re.search(rf"(?<![\w])(?:{stems})", description, re.IGNORECASE):
+            return True
+    return False
+
+
+def _requires_normalized_pattern(
+    pattern, description: str, *, allow_any_pattern: bool = False
+) -> bool:
+    allowed = {
         "lorenz_system",
         "van_der_pol_oscillator",
         "duffing_oscillator",
-    }:
+        "sirs_epidemic",
+        "student_club",
+    }
+    if pattern is None or (pattern.id not in allowed and not allow_any_pattern):
+        return False
+    if _pattern_time_conflict(pattern, description):
         return False
     return not any(
         token in description.lower()
@@ -383,6 +414,134 @@ def _requires_normalized_pattern(pattern, description: str) -> bool:
             "si units",
             "second",
         )
+    )
+
+
+def _complete_normalized_pattern(
+    raw: list[dict], metadata: dict, pattern, description: str
+) -> None:
+    if not _requires_normalized_pattern(pattern, description):
+        return
+    metadata["time"] = {
+        **(metadata.get("time") or pattern.document.time.model_dump(mode="json")),
+        "unit": pattern.document.time.unit,
+    }
+    expected = [
+        item for item in pattern.document.variables if item.kind in {"flow", "auxiliary"}
+    ]
+    for variable in expected:
+        if variable.kind != "flow":
+            continue
+        for item in raw:
+            if item.get("kind") != "flow":
+                continue
+            source = item.get("source") or {}
+            target = item.get("target") or {}
+            if (
+                item.get("id") == variable.id
+                or (
+                    source.get("kind") == variable.source.kind
+                    and source.get("id") == variable.source.id
+                    and target.get("kind") == variable.target.kind
+                    and target.get("id") == variable.target.id
+                )
+            ):
+                if (
+                    source.get("kind") != variable.source.kind
+                    or source.get("id") != variable.source.id
+                    or target.get("kind") != variable.target.kind
+                    or target.get("id") != variable.target.id
+                ):
+                    raise ModelValidationError(
+                        f"{pattern.id} flow {variable.id} must preserve validated topology"
+                    )
+                label = item.get("label")
+                description_text = item.get("description")
+                item.clear()
+                item.update(variable.model_dump(mode="json"))
+                item["label"] = label or variable.label
+                item["description"] = description_text or variable.description
+    present = {item.get("id") for item in raw}
+    for variable in expected:
+        if variable.id in present:
+            if variable.kind == "auxiliary":
+                item = next(item for item in raw if item.get("id") == variable.id)
+                label = item.get("label")
+                description_text = item.get("description")
+                item.clear()
+                item.update(variable.model_dump(mode="json"))
+                item["label"] = label or variable.label
+                item["description"] = description_text or variable.description
+        else:
+            raw.append(variable.model_dump(mode="json"))
+            present.add(variable.id)
+
+
+def _pattern_has_only_known_numbers(pattern, description: str) -> bool:
+    known = {
+        float(value)
+        for value in (
+            pattern.document.time.initial_time,
+            pattern.document.time.final_time,
+            pattern.document.time.time_step,
+            pattern.document.time.saveper,
+        )
+    }
+    for variable in pattern.document.variables:
+        for field in ("initial", "expression", "derivative"):
+            expression = getattr(variable, field, None)
+            if expression is None:
+                continue
+            known.update(
+                float(node.value)
+                for node in walk(expression)
+                if node.op == "lit" and not isinstance(node.value, bool)
+            )
+    for literal in re.findall(
+        r"(?<![A-Za-z0-9_])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?",
+        description,
+    ):
+        value = float(literal)
+        if not any(math.isclose(value, candidate, rel_tol=1e-9, abs_tol=1e-9) for candidate in known):
+            return False
+    return True
+
+
+def _pattern_document_for_description(pattern, description: str) -> ModelDocument | None:
+    if not _requires_normalized_pattern(pattern, description, allow_any_pattern=True):
+        return None
+    if not _pattern_has_only_known_numbers(pattern, description):
+        return None
+    document = pattern.document
+    brief = ModelBrief(
+        goal=pattern.description,
+        time_horizon=str(document.time.final_time),
+        time_unit=document.time.unit,
+        stocks=[item.id for item in document.variables if item.kind == "stock"],
+        flows=[item.id for item in document.variables if item.kind == "flow"],
+        exogenous_inputs=[item.id for item in document.variables if item.kind == "constant"],
+    )
+    return document.model_copy(
+        update={
+            "id": "model",
+            "description": description,
+            "brief": brief,
+            "pattern_id": pattern.id,
+            "repair_attempts": 0,
+            "assumptions": [
+                *document.assumptions,
+                Assumption(
+                    path="pattern",
+                    value=pattern.id,
+                    source="archetype",
+                    rationale=(
+                        "The description has no custom numeric values outside the validated "
+                        "pattern, so its canonical equations and defaults are preserved."
+                    ),
+                    requires_confirmation=False,
+                ),
+            ],
+        }
     )
 
 
@@ -979,6 +1138,74 @@ def _smoke(document: ModelDocument) -> dict[str, Any]:
     return {"points": len(smoke.time), "engine": smoke.engine, "method": smoke.integration_method}
 
 
+def _complete_document(
+    document: ModelDocument,
+    *,
+    workdir: Path | None,
+    rag_sources: list[str] | None = None,
+) -> ModelDocument:
+    _save_stage(
+        workdir,
+        "graphs",
+        {
+            "cld": document.cld_data.model_dump(mode="json"),
+            "sfd": document.sfd_data.model_dump(mode="json"),
+        },
+    )
+    _save_stage(workdir, "exports")
+    try:
+        generate_python_code(document)
+        export_vensim(document)
+        if document.validation.capabilities.supported.get("xmile_export", False):
+            export_xmile(document)
+    except Exception as exc:
+        raise ModelValidationError(
+            f"generated model export failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    warnings = [item.message for item in document.validation.issues if item.severity == "warning"]
+    warnings.extend(
+        issue
+        for graph in (document.cld_data, document.sfd_data)
+        for issue in graph.validation.issues
+        if issue.startswith("warning:")
+    )
+    formats = ["python", "vensim"]
+    if document.validation.capabilities.supported.get("xmile_export", False):
+        formats.append("xmile")
+    log = [
+        f"pattern: {document.pattern_id or 'none'}",
+        f"repairs: {document.repair_attempts}",
+        f"variables: {len(document.variables)}",
+        f"validation: {document.validation.status}",
+        f"cld: {len(document.cld_data.edges)} edges",
+        f"sfd: {len(document.sfd_data.edges)} edges",
+        f"exports: {', '.join(formats)}",
+    ]
+    if rag_sources:
+        log.append(f"rag: {', '.join(rag_sources)}")
+    document = document.model_copy(
+        update={
+            "artifacts": {
+                format_name: f"model.{extension}"
+                for format_name, extension in (
+                    ("python", "py"),
+                    ("vensim", "mdl"),
+                    ("xmile", "xmile"),
+                )
+                if format_name in formats
+            },
+            "assistant_text": (
+                f"Модель построена: {len(document.variables)} переменных, "
+                f"{len(document.cld_data.validation.feedback_loops)} петель обратной связи."
+            ),
+            "warnings": warnings,
+            "generation_log": log,
+        }
+    )
+    _save_stage(workdir, "done", document.model_dump(mode="json"))
+    return document
+
+
 async def generate_model(
     request: GenerationRequest,
     llm: LLMClient,
@@ -986,11 +1213,31 @@ async def generate_model(
     workdir: Path | None = None,
     max_repairs: int | None = None,
 ) -> ModelDocument:
+    from .routing import generate_with_routing
+
+    return await generate_with_routing(
+        llm, _generate_model_once, request, workdir=workdir, max_repairs=max_repairs
+    )
+
+
+async def _generate_model_once(
+    request: GenerationRequest,
+    llm: LLMClient,
+    *,
+    workdir: Path | None = None,
+    max_repairs: int | None = None,
+) -> ModelDocument:
+    validate_description_scope(request.description)
     repairs = max_repairs if max_repairs is not None else int(os.environ.get("LLM_MAX_REPAIRS", "3"))
     budget = _RepairBudget(max(0, min(repairs, 3)))
     description = _description(request)
     pattern = select_pattern(description)
     pattern_text = pattern_prompt(pattern)
+    if request.base_model is None and _flag("LLM_PATTERN_SHORTCUT", False):
+        direct = _pattern_document_for_description(pattern, request.description)
+        if direct is not None:
+            _save_stage(workdir, "pattern", direct.model_dump(mode="json"))
+            return _complete_document(direct, workdir=workdir)
 
     component_result: tuple[list[SDVariable], TimeSettings, list[Assumption]] | None = None
 
@@ -1022,11 +1269,14 @@ async def generate_model(
             _save_stage(workdir, "rag", {"sources": rag_sources, "context_chars": len(rag_context)})
 
         def parse_components(response: Any) -> tuple[ComponentPlan, Any]:
-            plan = ComponentPlan.model_validate(normalize_component_payload(response))
+            normalized = normalize_explicit_ode_payload(response, description)
+            plan = ComponentPlan.model_validate(
+                normalize_component_payload(normalized, default_time_unit=brief.time_unit)
+            )
             plan = apply_explicit_odes(plan, description)
             if plan.time is not None:
                 plan = plan.model_copy(
-                    update={"time": normalize_inferred_time(plan.time, description)}
+                    update={"time": normalize_inferred_time(plan.time, description, plan.components)}
                 )
             if plan.components and plan.time is None:
                 raise ModelValidationError("component plan requires time settings")
@@ -1049,7 +1299,11 @@ async def generate_model(
             ),
             system="You specify typed dynamic mechanisms. Return only JSON.",
             temperature=0.1,
-            response_schema=None,
+            response_schema=(
+                ComponentPlan.model_json_schema()
+                if _flag("LLM_COMPONENT_STRUCTURED_OUTPUT", False)
+                else None
+            ),
             parser=parse_components,
             budget=budget,
             workdir=workdir,
@@ -1101,10 +1355,12 @@ async def generate_model(
                 if request.base_model
                 else None,
             )
+            metadata, raw = result
+            _complete_normalized_pattern(raw, metadata, pattern, description)
             _validate_variable_scope(
-                result[1], pattern, description, (result[0].get("time") or {}).get("unit")
+                raw, pattern, description, (metadata.get("time") or {}).get("unit")
             )
-            return result
+            return metadata, raw
 
         metadata, raw = await _call_stage(
             llm,
@@ -1291,64 +1547,4 @@ async def generate_model(
         raise ModelValidationError(detail, repair_attempts=budget.attempts)
     document = document.model_copy(update={"repair_attempts": budget.attempts})
     _save_stage(workdir, "validation", document.validation.model_dump(mode="json"))
-    _save_stage(
-        workdir,
-        "graphs",
-        {
-            "cld": document.cld_data.model_dump(mode="json"),
-            "sfd": document.sfd_data.model_dump(mode="json"),
-        },
-    )
-
-    _save_stage(workdir, "exports")
-    try:
-        generate_python_code(document)
-        export_vensim(document)
-        if document.validation.capabilities.supported.get("xmile_export", False):
-            export_xmile(document)
-    except Exception as exc:
-        raise ModelValidationError(
-            f"generated model export failed: {type(exc).__name__}: {exc}"
-        ) from exc
-    warnings = [item.message for item in document.validation.issues if item.severity == "warning"]
-    warnings.extend(
-        issue
-        for graph in (document.cld_data, document.sfd_data)
-        for issue in graph.validation.issues
-        if issue.startswith("warning:")
-    )
-    formats = ["python", "vensim"]
-    if document.validation.capabilities.supported.get("xmile_export", False):
-        formats.append("xmile")
-    log = [
-        f"pattern: {document.pattern_id or 'none'}",
-        f"repairs: {document.repair_attempts}",
-        f"variables: {len(document.variables)}",
-        f"validation: {document.validation.status}",
-        f"cld: {len(document.cld_data.edges)} edges",
-        f"sfd: {len(document.sfd_data.edges)} edges",
-        f"exports: {', '.join(formats)}",
-    ]
-    if rag_sources:
-        log.append(f"rag: {', '.join(rag_sources)}")
-    document = document.model_copy(
-        update={
-            "artifacts": {
-                format_name: f"model.{extension}"
-                for format_name, extension in (
-                    ("python", "py"),
-                    ("vensim", "mdl"),
-                    ("xmile", "xmile"),
-                )
-                if format_name in formats
-            },
-            "assistant_text": (
-                f"Модель построена: {len(document.variables)} переменных, "
-                f"{len(document.cld_data.validation.feedback_loops)} петель обратной связи."
-            ),
-            "warnings": warnings,
-            "generation_log": log,
-        }
-    )
-    _save_stage(workdir, "done", document.model_dump(mode="json"))
-    return document
+    return _complete_document(document, workdir=workdir, rag_sources=rag_sources)

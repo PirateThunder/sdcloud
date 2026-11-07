@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Protocol
@@ -10,6 +12,17 @@ import httpx
 
 from .exceptions import LLMError, LLMResponseError, ModelValidationError
 from .expression_parser import normalize_expression
+
+_INFERENCE_SEED: ContextVar[int | None] = ContextVar("inference_seed", default=None)
+
+
+@contextmanager
+def use_inference_seed(seed: int | None):
+    token = _INFERENCE_SEED.set(seed)
+    try:
+        yield
+    finally:
+        _INFERENCE_SEED.reset(token)
 
 
 class LLMClient(Protocol):
@@ -90,6 +103,11 @@ def _flag(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _optional_integer(name: str) -> int | None:
+    value = os.environ.get(name)
+    return int(value) if value not in {None, ""} else None
+
+
 def strict_json_schema(value: Any) -> Any:
     if isinstance(value, list):
         return [strict_json_schema(item) for item in value]
@@ -119,15 +137,21 @@ class OpenAICompatibleLLM:
         structured_output: bool = True,
         allow_unstructured_fallback: bool = False,
         max_tokens: int = 8192,
+        seed: int | None = None,
         request_retries: int = 2,
         retry_delay: float = 1.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        provider_options: dict | None = None,
     ) -> None:
         self.model = model
         self.provider_name = provider_name
+        self.provider_options = deepcopy(provider_options) if provider_options else {}
         self.structured_output = structured_output
+        self.component_structured_output = _flag("LLM_COMPONENT_STRUCTURED_OUTPUT", False)
+        self.pattern_shortcut = _flag("LLM_PATTERN_SHORTCUT", False)
         self.allow_unstructured_fallback = allow_unstructured_fallback
         self.max_tokens = max_tokens
+        self.seed = seed
         self.request_retries = max(0, request_retries)
         self.retry_delay = retry_delay
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
@@ -159,6 +183,13 @@ class OpenAICompatibleLLM:
             "temperature": temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.provider_options:
+            payload["provider"] = deepcopy(self.provider_options)
+        seed = _INFERENCE_SEED.get()
+        if seed is None:
+            seed = self.seed
+        if seed is not None:
+            payload["seed"] = seed
         if response_schema is not None and self.structured_output:
             payload["response_format"] = {
                 "type": "json_schema",
@@ -195,7 +226,8 @@ class OpenAICompatibleLLM:
             if response.is_error:
                 raise LLMError(
                     f"{self.provider_name} HTTP {response.status_code} at stage {stage}: "
-                    f"{response.text[:1000]}"
+                    f"{response.text[:1000]}",
+                    status_code=response.status_code,
                 )
             try:
                 body = response.json()
@@ -204,6 +236,12 @@ class OpenAICompatibleLLM:
                     f"{self.provider_name} returned invalid response JSON at stage {stage}",
                     response_text=response.text[:6000],
                 ) from exc
+            if not isinstance(body, dict) or not isinstance(body.get("choices"), list) or not body["choices"]:
+                raise LLMResponseError(
+                    f"{self.provider_name} response has no choices at stage {stage}: "
+                    f"{response.text[:1000]}",
+                    response_text=response.text[:6000],
+                )
             choice = body["choices"][0]
             content = choice["message"]["content"]
             if not isinstance(content, str) or not content.strip():
@@ -254,8 +292,26 @@ class OpenRouterLLM(OpenAICompatibleLLM):
             structured_output=_flag("LLM_STRUCTURED_OUTPUT", True),
             allow_unstructured_fallback=_flag("LLM_ALLOW_UNSTRUCTURED_FALLBACK", False),
             max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "8192")),
+            seed=_optional_integer("LLM_SEED"),
+            request_retries=int(os.environ.get("LLM_REQUEST_RETRIES", "5")),
+            retry_delay=float(os.environ.get("LLM_RETRY_DELAY", "2")),
             transport=transport,
+            provider_options=(
+                {
+                    "order": [
+                        item.strip()
+                        for item in os.environ["OPENROUTER_PROVIDER_ORDER"].split(",")
+                        if item.strip()
+                    ],
+                    "allow_fallbacks": _flag("OPENROUTER_ALLOW_PROVIDER_FALLBACK", False),
+                    "require_parameters": True,
+                }
+                if os.environ.get("OPENROUTER_PROVIDER_ORDER")
+                else None
+            ),
         )
+        self.component_structured_output = _flag("LLM_COMPONENT_STRUCTURED_OUTPUT", False)
+        self.pattern_shortcut = _flag("LLM_PATTERN_SHORTCUT", False)
 
 
 class FixtureLLM:
@@ -294,6 +350,10 @@ def create_llm(provider: str, fixture_path: Path | None = None) -> LLMClient:
             raise LLMError("fixture provider requires --fixture or LLM_FIXTURE_PATH")
         return FixtureLLM(fixture_path)
     if provider in {"local", "vllm", "openai_compatible"}:
+        if _flag("LLM_DYNAMIC_ROUTING", False):
+            from .routing import DynamicLLM
+
+            return DynamicLLM.from_env()
         model = os.environ.get("LOCAL_LLM_MODEL")
         if not model:
             raise LLMError("LOCAL_LLM_MODEL is required for the local provider")
@@ -306,6 +366,7 @@ def create_llm(provider: str, fixture_path: Path | None = None) -> LLMClient:
             structured_output=_flag("LOCAL_LLM_STRUCTURED_OUTPUT", True),
             allow_unstructured_fallback=_flag("LOCAL_LLM_ALLOW_UNSTRUCTURED_FALLBACK", False),
             max_tokens=int(os.environ.get("LOCAL_LLM_MAX_TOKENS", "8192")),
+            seed=_optional_integer("LOCAL_LLM_SEED"),
         )
     if provider != "openrouter":
         raise LLMError(f"unknown LLM provider: {provider}")
