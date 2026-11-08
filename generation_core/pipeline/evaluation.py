@@ -44,12 +44,18 @@ def _case_index(report: Mapping[str, Any]) -> dict[tuple[str, int], Mapping[str,
 
 
 def _check_compatibility(
-    baseline: Mapping[str, Any], treatment: Mapping[str, Any]
+    baseline: Mapping[str, Any],
+    treatment: Mapping[str, Any],
+    *,
+    allow_model_difference: bool = False,
 ) -> None:
     for field in ("corpus_sha256", "pipeline_sha256"):
         if baseline.get(field) != treatment.get(field):
             raise ValueError(f"reports have different {field}")
-    for field in ("provider", "model", "corpus_role", "protocol_sha256"):
+    fields = ("provider", "corpus_role", "protocol_sha256")
+    if not allow_model_difference:
+        fields = (*fields, "model")
+    for field in fields:
         left = baseline.get(field)
         right = treatment.get(field)
         if left is not None and right is not None and left != right:
@@ -69,16 +75,28 @@ def paired_metric_comparison(
     metric: str = "behavior",
     bootstrap_samples: int = 10_000,
     seed: int = 2026,
+    allow_model_difference: bool = False,
 ) -> dict[str, Any]:
     if metric not in CASE_METRICS:
         raise ValueError(f"unknown paired metric: {metric}")
     if bootstrap_samples < 1:
         raise ValueError("bootstrap_samples must be positive")
-    _check_compatibility(baseline, treatment)
+    _check_compatibility(
+        baseline, treatment, allow_model_difference=allow_model_difference
+    )
     baseline_cases = _case_index(baseline)
     treatment_cases = _case_index(treatment)
     if baseline_cases.keys() != treatment_cases.keys():
         raise ValueError("reports do not contain identical prompt_id/run pairs")
+    for key in baseline_cases:
+        baseline_seed = baseline_cases[key].get("inference_seed")
+        treatment_seed = treatment_cases[key].get("inference_seed")
+        if (
+            baseline_seed is not None
+            and treatment_seed is not None
+            and baseline_seed != treatment_seed
+        ):
+            raise ValueError(f"reports have different inference_seed for {key}")
     field = CASE_METRICS[metric]
     pairs = [
         (
@@ -176,6 +194,60 @@ def compare_report_sets(
             previous = max(previous, adjusted)
             item["mcnemar_holm_pvalue"] = previous
     return comparisons
+
+
+def compare_model_reports(
+    baseline: Mapping[str, Any],
+    treatment: Mapping[str, Any],
+    *,
+    metrics: Sequence[str] = ("executable", "semantic", "behavior"),
+    bootstrap_samples: int = 10_000,
+    seed: int = 2026,
+) -> dict[str, Any]:
+    if baseline.get("kind") != "llm_ablation" or treatment.get("kind") != "llm_ablation":
+        raise ValueError("model comparison requires llm_ablation reports")
+    for field in ("corpus_sha256", "pipeline_sha256", "protocol_sha256"):
+        if baseline.get(field) != treatment.get(field):
+            raise ValueError(f"reports have different {field}")
+    comparisons = []
+    arms = ("direct", "typed_no_repair", "full")
+    for arm_index, arm in enumerate(arms):
+        if arm not in baseline["arms"] or arm not in treatment["arms"]:
+            raise ValueError(f"missing model comparison arm: {arm}")
+        for metric_index, metric in enumerate(metrics):
+            item = paired_metric_comparison(
+                baseline["arms"][arm],
+                treatment["arms"][arm],
+                metric=metric,
+                bootstrap_samples=bootstrap_samples,
+                seed=seed + arm_index * len(metrics) + metric_index,
+                allow_model_difference=True,
+            )
+            item["generation_mode"] = arm
+            item["baseline"] = baseline.get("model")
+            item["treatment"] = treatment.get("model")
+            comparisons.append(item)
+    for metric in metrics:
+        family = sorted(
+            (item for item in comparisons if item["metric"] == metric),
+            key=lambda item: item["mcnemar_exact_pvalue"],
+        )
+        previous = 0.0
+        for rank, item in enumerate(family):
+            adjusted = min(1.0, (len(family) - rank) * item["mcnemar_exact_pvalue"])
+            previous = max(previous, adjusted)
+            item["mcnemar_holm_pvalue"] = previous
+    return {
+        "schema_version": "1.0",
+        "kind": "paired_model_comparison",
+        "baseline_model": baseline.get("model"),
+        "treatment_model": treatment.get("model"),
+        "corpus_sha256": baseline.get("corpus_sha256"),
+        "pipeline_sha256": baseline.get("pipeline_sha256"),
+        "protocol_sha256": baseline.get("protocol_sha256"),
+        "corpus_role": baseline.get("protocol", {}).get("corpus_role"),
+        "comparisons": comparisons,
+    }
 
 
 def _public_model(model: Mapping[str, Any]) -> dict[str, Any]:

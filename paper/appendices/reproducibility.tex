@@ -1,0 +1,171 @@
+\chapter{КОМАНДЫ ВОСПРОИЗВЕДЕНИЯ}
+\label{app:reproducibility}
+
+Проверки выполняются из корня репозитория. Для generation core:
+
+\begin{lstlisting}[language=bash]
+cd generation_core
+uv sync --frozen
+uv run pytest
+uv run ruff check .
+uv lock --check
+\end{lstlisting}
+
+Для backend и frontend:
+
+\begin{lstlisting}[language=bash]
+cd backend
+uv run pytest
+uv run ruff check .
+uv lock --check
+
+cd ../frontend
+bun run test
+bun run lint
+bun run build
+bun run test:e2e
+\end{lstlisting}
+
+Внешний corpus не входит в репозиторий как vendored dataset. Его источник и commit фиксируются:
+
+\begin{lstlisting}[language=bash]
+git clone https://github.com/SDXorg/test-models.git out/sdxorg-test-models
+git -C out/sdxorg-test-models checkout 21aab02739dc5187bc9564e4d3de14e575905d2f
+
+uv run python external_benchmark.py \
+  --root out/sdxorg-test-models \
+  --output out/sdx-vensim.json
+\end{lstlisting}
+
+Пример benchmark-запуска локальной 8B после настройки OpenAI-compatible endpoint:
+
+\begin{lstlisting}[language=bash]
+export LOCAL_LLM_BASE_URL=http://127.0.0.1:18000/v1
+export LOCAL_LLM_MODEL=Qwen/Qwen3-8B-GGUF
+export LOCAL_LLM_STRUCTURED_OUTPUT=1
+export LOCAL_LLM_MAX_TOKENS=8192
+
+uv run python benchmark.py \
+  --provider local \
+  --prompts-file pipeline/benchmark_acceptance2_prompts.json \
+  --runs 3 \
+  --concurrency 1 \
+  --max-repairs 2 \
+  --output out/gpu-qwen3-8b-q4-v2-acceptance2.json \
+  --artifacts-dir out/gpu-qwen3-8b-q4-v2-acceptance2
+\end{lstlisting}
+
+Для удалённой 8B используется Ministral-8B-2512 через официальный Mistral endpoint OpenRouter. Quantization endpoint не раскрывает, поэтому оно не предполагается. GPU и 14B в этой серии не используются. Секретный ключ читается из локального `.env` и не включается в отчёты:
+
+\begin{lstlisting}[language=bash]
+export OPENROUTER_MODEL=mistralai/ministral-8b-2512
+export OPENROUTER_PROVIDER_ORDER=Mistral
+export OPENROUTER_ALLOW_PROVIDER_FALLBACK=0
+export LLM_SEED=2026
+export LLM_STRUCTURED_OUTPUT=1
+export LLM_COMPONENT_STRUCTURED_OUTPUT=1
+export LLM_PATTERN_SHORTCUT=1
+export LLM_ALLOW_UNSTRUCTURED_FALLBACK=0
+export LLM_RAG_ENABLED=0
+
+uv run --env-file ../.env python benchmark.py \
+  --provider openrouter --mode ablation \
+  --prompts-file pipeline/benchmark_confirmatory_8b_v2_prompts.json \
+  --runs 3 --concurrency 1 --max-repairs 2 --corpus-role blind \
+  --bootstrap-samples 10000 --seed 2026 \
+  --output out/openrouter-ministral8b-ablation-v2.json \
+  --artifacts-dir out/openrouter-ministral8b-ablation-v2-artifacts \
+  --annotations out/openrouter-ministral8b-annotations-v2
+\end{lstlisting}
+
+Проверка controlled ablation на воспроизводимом fixture без обращения к LLM API:
+
+\begin{lstlisting}[language=bash]
+uv run python benchmark.py --provider fixture \
+  --fixture tests/fixtures/llm_ablation_responses.json --mode ablation \
+  --prompt-ids predator_prey_ru --corpus-role regression \
+  --bootstrap-samples 200 --seed 19 \
+  --artifacts-dir out/cli-ablation-artifacts \
+  --annotations out/cli-annotations --output out/cli-ablation.json
+
+uv run python evaluate.py compare --report out/cli-ablation.json \
+  --bootstrap-samples 200 --seed 19 --output out/cli-comparison.json
+
+uv run python evaluate.py agreement --first expert-1.csv \
+  --second expert-2.csv --output out/annotation-agreement.json
+\end{lstlisting}
+
+Fixture проверяет только evaluation framework, а не качество LLM. Confirmatory run требует новый blind corpus и зафиксированный \codeid{pipeline/evaluation_protocol.json}. Эксперту передаются \codeid{expert/}, но не \codeid{private/answer_key.json}.
+
+Отчёты содержат hashes, настройки и case results. Для публикации сохраняются версия vLLM plugin, inference lockfiles, prompts и аннотационная инструкция. Секреты в отчёты и репозиторий не включаются.
+
+\section{Controlled локальная 8B}
+
+Для совпадения pipeline hash используется исходник:
+\begin{center}
+\scriptsize\ttfamily d7ee55d505d0f3bb360ae5adc4156e956ff6cee9
+\end{center}
+Последующие изменения offline-анализа не подменялись на удалённой машине во время прогона. Checkpoint --- \codeid{Qwen/Qwen3-8B-GGUF}; его revision:
+\begin{center}
+\scriptsize\ttfamily 7c41481f57cb95916b40956ab2f0b139b296d974
+\end{center}
+Запуск llama.cpp на GPU-хосте:
+
+\begin{lstlisting}[language=bash,breakatwhitespace=false]
+docker run --rm --gpus all -p 127.0.0.1:8000:8000 \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:5bb779a449a18d8f4333e9814e887746342fe555c528f5eabc92b2093e32673a \
+  --model /root/.cache/huggingface/hub/models--Qwen--Qwen3-8B-GGUF/snapshots/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf \
+  --alias small --ctx-size 8192 --n-gpu-layers 99 \
+  --host 0.0.0.0 --port 8000
+\end{lstlisting}
+
+После готовности \codeid{/health} и сохранения \codeid{/props} выполняется benchmark без RAG и unstructured fallback:
+
+\begin{lstlisting}[language=bash]
+export LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1
+export LOCAL_LLM_MODEL=small
+export LOCAL_LLM_STRUCTURED_OUTPUT=1
+export LOCAL_LLM_ALLOW_UNSTRUCTURED_FALLBACK=0
+export LOCAL_LLM_MAX_TOKENS=4096
+export LOCAL_LLM_TIMEOUT=600
+export LOCAL_LLM_SEED=2026
+export LLM_REQUEST_RETRIES=2
+export LLM_COMPONENT_STRUCTURED_OUTPUT=0
+export LLM_PATTERN_SHORTCUT=1
+export LLM_RAG_ENABLED=0
+
+uv run python benchmark.py --provider local --mode ablation \
+  --prompts-file pipeline/benchmark_confirmatory_8b_v2_prompts.json \
+  --runs 3 --concurrency 1 --max-repairs 2 --corpus-role blind \
+  --bootstrap-samples 10000 --seed 2026 \
+  --output out/local-qwen3-8b-q4km-ablation.json \
+  --artifacts-dir out/local-qwen3-8b-q4km-artifacts \
+  --annotations out/local-qwen3-8b-q4km-annotations
+
+uv run python evaluate.py compare \
+  --report out/local-qwen3-8b-q4km-ablation.json \
+  --bootstrap-samples 10000 --seed 2026 \
+  --output out/local-qwen3-8b-q4km-paired-analysis.json
+\end{lstlisting}
+
+Фактический манифест: \codeid{evaluation/controlled-local-qwen3.json}.
+
+Полная парная статистика: \codeid{evaluation/controlled-local-qwen3-paired-analysis.json}.
+
+Raw artifacts и пакеты аннотации сохраняются локально в \codeid{generation_core/out/} и не коммитятся. Для будущего сравнения с 30B команда \codeid{evaluate.py} \codeid{compare-models} требует совпадения corpus, pipeline, protocol, LLM settings и prompt/run/seed пар; фактический 30B-запуск в этой серии не выполнялся.
+
+После завершения evaluation inference-сервер и GPU-monitor останавливаются. Основной продуктовый стек при этом не используется и не останавливается.
+
+\section{Полный REST product E2E}
+
+Проверка использует отдельный local/test-стек. В нём доступен одноразовый код для разработки, а генерация заменена воспроизводимым fixture. Production и внешний LLM API не вызываются:
+
+\begin{lstlisting}[language=bash]
+cd backend
+uv run python tests/live_e2e.py \
+  --base-url http://127.0.0.1:61231 \
+  --output .test_tmp/rest-e2e-report.json
+\end{lstlisting}
+
+Сценарий проверяет OTP и refresh, создание беседы, три упорядоченных сообщения и идемпотентный replay, контекстный ответ без модели, вторую версию после правки, симуляцию, Python/Vensim/XMILE exports и запрет доступа другого пользователя. Фактический изолированный прогон завершился 46 HTTP-шагами и 28 успешными проверками; его volumes и контейнеры удалены после теста.

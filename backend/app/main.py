@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 settings = get_settings()
 app_kwargs = {
     "title": "sdCloud Backend",
-    "version": "0.6.0",
+    "version": "0.6.1",
     "description": "Email/OTP authentication, conversations, system dynamics models and simulations",
     "lifespan": lifespan,
 }

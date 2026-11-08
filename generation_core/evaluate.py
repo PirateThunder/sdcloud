@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from pipeline.evaluation import (
+    compare_model_reports,
     compare_report_sets,
     export_annotation_tasks,
     inter_annotator_agreement,
@@ -18,6 +19,15 @@ def main() -> int:
     compare.add_argument("--bootstrap-samples", type=int, default=10_000)
     compare.add_argument("--seed", type=int, default=2026)
     compare.add_argument("--output", type=Path, required=True)
+
+    model_compare = subparsers.add_parser(
+        "compare-models", help="Compare two models on identical prompt/run/seed pairs"
+    )
+    model_compare.add_argument("--baseline", type=Path, required=True)
+    model_compare.add_argument("--treatment", type=Path, required=True)
+    model_compare.add_argument("--bootstrap-samples", type=int, default=10_000)
+    model_compare.add_argument("--seed", type=int, default=2026)
+    model_compare.add_argument("--output", type=Path, required=True)
 
     export = subparsers.add_parser("export", help="Export blind expert annotation tasks")
     export.add_argument("--report", type=Path, required=True)
@@ -50,6 +60,14 @@ def main() -> int:
                 seed=args.seed,
             ),
         }
+        write_json_atomic(args.output, result)
+    elif args.command == "compare-models":
+        result = compare_model_reports(
+            read_json(args.baseline),
+            read_json(args.treatment),
+            bootstrap_samples=args.bootstrap_samples,
+            seed=args.seed,
+        )
         write_json_atomic(args.output, result)
     elif args.command == "export":
         report = read_json(args.report)

@@ -1,0 +1,181 @@
+{
+  "schema_version": "1.0",
+  "kind": "controlled_local_model_evaluation",
+  "status": "completed",
+  "scope": "single_model_8b_only",
+  "source_commit": "d7ee55d505d0f3bb360ae5adc4156e956ff6cee9",
+  "pipeline_sha256": "cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e",
+  "created_at": "2026-11-08T01:41:57.303424+00:00",
+  "corpus": {
+    "path": "generation_core/pipeline/benchmark_confirmatory_8b_v2_prompts.json",
+    "sha256": "36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18",
+    "role": "blind",
+    "prompts": 24,
+    "runs_per_prompt": 3,
+    "note": "Frozen before this local run; the generator was not tuned from these results. Prior Ministral results are reported separately and are not pooled with this model."
+  },
+  "protocol": {
+    "path": "generation_core/pipeline/evaluation_protocol.json",
+    "sha256": "8a479929a7aa026261d795ad350d241ffe00039a12d672dd5661f1944dc0ebbc",
+    "arms": ["direct", "typed_no_repair", "full"],
+    "cases_per_model": 216,
+    "completed_cases": 216,
+    "max_repairs": 2,
+    "bootstrap_samples": 10000,
+    "statistical_seed": 2026,
+    "inference_seeds": [2026, 2027, 2028],
+    "pair_key": ["prompt_id", "run", "inference_seed"],
+    "protocol_deviations": []
+  },
+  "runtime": {
+    "engine": "llama.cpp server-cuda",
+    "image_digest": "ghcr.io/ggml-org/llama.cpp@sha256:5bb779a449a18d8f4333e9814e887746342fe555c528f5eabc92b2093e32673a",
+    "build_info": "b12169-3ed7284f2",
+    "execution": "One 8B model on one RTX 5090 Laptop GPU with 24 GB VRAM, concurrency=1. The 30B benchmark was not started.",
+    "context_tokens": 8192,
+    "max_output_tokens": 4096,
+    "temperature": 0.3,
+    "top_k": 40,
+    "top_p": 0.95,
+    "min_p": 0.05,
+    "reasoning_format": "none",
+    "structured_output": true,
+    "component_structured_output": false,
+    "pattern_shortcut": true,
+    "unstructured_fallback": false,
+    "rag": false,
+    "request_retries": 2,
+    "request_timeout_seconds": 600,
+    "concurrency": 1
+  },
+  "models": {
+    "small": {
+      "status": "benchmark_completed",
+      "repository": "Qwen/Qwen3-8B-GGUF",
+      "revision": "7c41481f57cb95916b40956ab2f0b139b296d974",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "alias": "small",
+      "quantization": "Q4_K_M",
+      "parameters": 8190735360,
+      "file_bytes": 5027783488,
+      "file_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785"
+    },
+    "large": {
+      "status": "deferred_by_user_not_benchmarked",
+      "repository": "Qwen/Qwen3-30B-A3B-GGUF",
+      "revision": "e4d4bafdfb96a411a163846265362aceb0b9c63a",
+      "file": "Qwen3-30B-A3B-Q4_K_M.gguf",
+      "quantization": "Q4_K_M",
+      "file_bytes": 18556685824,
+      "file_sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5",
+      "note": "Downloaded weights are retained for a later session. No 30B inference server or benchmark was started in this experiment."
+    }
+  },
+  "results": {
+    "direct": {
+      "cases": 72,
+      "executable": {"successes": 2, "rate": 0.027777777777777776},
+      "semantic": {"successes": 2, "rate": 0.027777777777777776},
+      "behavior": {"successes": 2, "rate": 0.027777777777777776},
+      "repair_rate": 0.0,
+      "average_duration_seconds": 32.886,
+      "infrastructure_error_cases": 0
+    },
+    "typed_no_repair": {
+      "cases": 72,
+      "executable": {"successes": 53, "rate": 0.7361111111111112},
+      "semantic": {"successes": 50, "rate": 0.6944444444444444},
+      "behavior": {"successes": 49, "rate": 0.6805555555555556},
+      "repair_rate": 0.0,
+      "average_duration_seconds": 23.835,
+      "infrastructure_error_cases": 0
+    },
+    "full": {
+      "cases": 72,
+      "executable": {"successes": 68, "rate": 0.9444444444444444},
+      "semantic": {"successes": 63, "rate": 0.875},
+      "behavior": {"successes": 61, "rate": 0.8472222222222222},
+      "graph": {"successes": 68, "rate": 0.9444444444444444},
+      "repair_cases": 19,
+      "repair_rate": 0.2638888888888889,
+      "average_duration_seconds": 30.988,
+      "infrastructure_error_cases": 0,
+      "targets_90_85_85": "Executable and semantic point estimates pass; behavior is 0.2778 percentage points below 85 percent (62 successes would be required)."
+    }
+  },
+  "statistical_analysis": {
+    "path": "evaluation/controlled-local-qwen3-paired-analysis.json",
+    "sha256": "af3dd1ea3938d13f5c2cd389885f53a36f9252673fdb0cf374bfdc7764d9cf2f",
+    "method": "Two-sided exact McNemar, prompt-cluster bootstrap 95% CI over 10000 samples and Holm correction within each metric family. Repeated runs of one prompt remain dependent observations.",
+    "typed_no_repair_to_full": {
+      "executable": {"difference_percentage_points": 20.833333333333336, "ci95_percentage_points": [9.722222222222222, 33.33333333333333], "treatment_only": 15, "baseline_only": 0, "mcnemar_holm_pvalue": 0.00006103515625},
+      "semantic": {"difference_percentage_points": 18.055555555555557, "ci95_percentage_points": [8.333333333333333, 30.55555555555556], "treatment_only": 13, "baseline_only": 0, "mcnemar_holm_pvalue": 0.000244140625},
+      "behavior": {"difference_percentage_points": 16.666666666666664, "ci95_percentage_points": [8.333333333333333, 26.38888888888889], "treatment_only": 12, "baseline_only": 0, "mcnemar_holm_pvalue": 0.00048828125}
+    },
+    "direct_to_full": {
+      "executable": {"difference_percentage_points": 91.66666666666666, "ci95_percentage_points": [84.72222222222222, 97.22222222222222], "mcnemar_holm_pvalue": 8.131516293641283e-20},
+      "semantic": {"difference_percentage_points": 84.72222222222222, "ci95_percentage_points": [72.1875, 95.83333333333334], "mcnemar_holm_pvalue": 2.6020852139652106e-18},
+      "behavior": {"difference_percentage_points": 81.94444444444444, "ci95_percentage_points": [68.05555555555556, 93.05555555555556], "mcnemar_holm_pvalue": 1.0408340855860843e-17}
+    },
+    "model_comparison": "Not performed: the paired 30B run is deferred. The historical 30B acceptance results use another pipeline and inference configuration and are not a controlled size comparison."
+  },
+  "failure_analysis": {
+    "full_non_executable_cases": 4,
+    "full_behavior_failures": 11,
+    "full_behavior_failure_groups": {
+      "managed_forest_logistic_instead_of_renewable_resource": 3,
+      "relaxation_cycle_units_or_static_output": 3,
+      "tracer_initial_value_100_instead_of_16": 1,
+      "parcel_duplicate_continuous_arrival_inflow": 1,
+      "components_repair_truncation": 1,
+      "periodic_relaxation_units": 2
+    },
+    "note": "These are descriptive failure groups, not new tuning targets for the frozen blind corpus. Four full-pipeline non-executable cases comprise three units failures and one truncation. The direct baseline had 46 truncation/empty-after-length cases among 70 non-executable cases."
+  },
+  "artifacts": {
+    "raw_report": "generation_core/out/local-qwen3-8b-q4km-ablation.json",
+    "raw_report_sha256": "c81f2e68705024f5a404b250abfcdc9d49e9cefb1cca15c7dc7273f780fab972",
+    "case_artifacts": "generation_core/out/local-qwen3-8b-q4km-artifacts",
+    "annotation_export": "generation_core/out/local-qwen3-8b-q4km-annotations",
+    "runtime_props": "generation_core/out/llama-small-props.json",
+    "gpu_monitor": "generation_core/out/gpu-small.csv",
+    "out_directories_are_gitignored": true
+  },
+  "integrity": {
+    "case_and_prompt_files_present": 216,
+    "executable_model_and_simulation_files_present": 123,
+    "expected_inference_seed_mismatches": 0,
+    "local_and_remote_report_sha256_match": true,
+    "infrastructure_error_cases": 0
+  },
+  "gpu_observations": {
+    "samples": 1270,
+    "first_sample": "2026-11-08T02:56:39.333+03:00",
+    "last_sample": "2026-11-08T04:42:36.010+03:00",
+    "peak_memory_mib": 6536,
+    "peak_temperature_celsius": 78,
+    "peak_power_watts": 172.97,
+    "after_evaluation_shutdown": {
+      "memory_used_mib": 513,
+      "memory_free_mib": 23625,
+      "active_cuda_processes": 0,
+      "evaluation_server": "stopped",
+      "gpu_monitor": "stopped"
+    }
+  },
+  "expert_review": {
+    "required_independent_experts": 2,
+    "status": "pending_human_annotation",
+    "tasks": 216,
+    "model_artifacts": 123,
+    "scores": ["0", "1", "NA"],
+    "agreement": "Cohen's kappa and raw agreement before adjudication",
+    "self_annotation_is_not_independent": true
+  },
+  "limitations": [
+    "Automatic semantic and behavior oracles do not replace independent expert review.",
+    "This is one model, quantization, runtime and frozen corpus; it does not establish universal robustness.",
+    "The controlled 8B/30B size comparison and a fresh unseen corpus after any future fixes remain separate experiments.",
+    "Production HTTPS and SMTP deployment were not performed."
+  ]
+}

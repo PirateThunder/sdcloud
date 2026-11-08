@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0, structural/Vensim/RAG hardening 0.5.0 и controlled evaluation/dynamic routing 0.6.0 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
+**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0, structural/Vensim/RAG hardening 0.5.0 и controlled evaluation/dynamic routing 0.6.0 и evaluation hardening 0.6.1 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -892,3 +892,29 @@ uv run ruff check .
   Отдельный high-VRAM smoke при `free=3540 MiB` и `threshold=3000 MiB` выбрал large напрямую,
   получил `{"ok": true}` и `fallback=false`; это подтверждает реальный VRAM-based selection,
   а не только mock-решение.
+
+## 32. Controlled local 8B и evaluation hardening (0.6.1)
+
+- На commit `d7ee55d505d0f3bb360ae5adc4156e956ff6cee9` выполнен frozen blind
+  ablation Qwen3-8B-Q4_K_M через llama.cpp: 24 prompts × 3 runs × 3 arms, 216 cases,
+  pipeline `cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e`.
+  Direct — 2,78% по всем метрикам; typed_no_repair — 73,61% executable,
+  69,44% semantic, 68,06% behavior; full — **94,44% executable, 87,50% semantic,
+  84,72% behavior**, repair rate 26,39%, average 30,988 с. Behavior ниже target 85%
+  на 0,28 п.п.; генератор по этому blind corpus не настраивался.
+- Full против typed_no_repair даёт +20,83 п.п. executable, +18,06 п.п. semantic
+  и +16,67 п.п. behavior (95% cluster CI [8,33; 26,39] п.п., Holm p=0,000488).
+  Во всех сравнениях 72 пары, inference seeds 2026/2027/2028 совпадают;
+  protocol deviations и infrastructure errors отсутствуют. Проверены 216 case/prompt
+  artifacts и 123 полных model/simulation комплекта. Сформировано 216 заданий для
+  независимой разметки, но люди-эксперты ещё не участвовали.
+- `evaluate.py compare-models` добавляет сравнение разных моделей на идентичных
+  prompt/run/seed и одном pipeline. Фактический сопоставимый 30B-запуск по решению
+  владельца отложен, поэтому вывода о размере модели эта серия не делает.
+  После 8B evaluation GPU-сервер и monitor остановлены; активных CUDA-процессов нет.
+- `backend/tests/live_e2e.py` проверяет реальный REST product flow, включая OTP,
+  refresh, контекстные сообщения, версии, simulation, exports и ownership.
+  Изолированный прогон — 46 HTTP steps и 28/28 checks; основной стек не изменялся.
+  Полный offline suite — **319 core, 20 backend и 12 frontend tests**; Ruff, Biome,
+  TypeScript, lockfiles и production frontend build проходят. Подробности и hashes —
+  `evaluation/controlled-local-qwen3.json`.

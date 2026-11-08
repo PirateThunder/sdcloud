@@ -1,0 +1,62 @@
+\chapter{КОНФИГУРАЦИЯ ЛОКАЛЬНОГО ЭКСПЕРИМЕНТА}
+\label{app:configuration}
+
+\begin{table}[H]
+    \centering
+    \caption{Параметры серии Qwen3-8B-Q4\_K\_M}
+    \label{tab:experiment-config}
+    \small
+    \begin{tabularx}{\textwidth}{L{5cm}X}
+        \toprule
+        Параметр & Значение \\
+        \midrule
+        Checkpoint & Qwen/Qwen3-8B-GGUF \\
+        Revision & 7c41481f57cb95916b40956ab2f0b139b296d974 \\
+        Файл & Qwen3-8B-Q4\_K\_M.gguf, 5 027 783 488 байт \\
+        GPU & NVIDIA GeForce RTX 5090 Laptop, 24 463 MiB, WSL2 \\
+        Inference & vLLM 0.30.0 и официальный GGUF plugin \\
+        Tokenizer/config & Qwen/Qwen3-8B \\
+        Контекст & 16 384 токена \\
+        Max output & 8 192 токена \\
+        Concurrency & 1 \\
+        Max repairs & 2 \\
+        Pipeline SHA-256 & {\scriptsize\ttfamily 62695337cf3f4912\allowbreak 7909d0cb567fa98e\allowbreak 95d37faf98c9df85\allowbreak 4ec169f851d37f91} \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Температура задаётся по этапам: 0,1 для brief и components, 0,2 для variables и equations, 0,1 для repair. Дополнительные sampling-параметры берутся из конфигурации модели и vLLM и должны сохраняться вместе с отчётом. Единый seed для побайтовой детерминированности не устанавливался, поэтому повторы не считаются идентичными запусками.
+
+Пик мониторинга составил 21 352 MiB VRAM, 80 °C и 176,91 Вт. После завершения vLLM занято 225 MiB. Значения памяти зависят от выбранной доли `gpu-memory-utilization` и размера KV-cache и не являются минимальными требованиями checkpoint.
+
+\section{Controlled llama.cpp-серия}
+
+Отдельная controlled серия выполнена только для 8B, без одновременного размещения 30B. Проверялся тот же checkpoint и revision, но другой inference runtime и protocol; результаты не смешиваются с прежней acceptance-таблицей.
+
+\begin{table}[H]
+    \centering
+    \caption{Параметры controlled локальной Qwen3-8B}
+    \label{tab:controlled-llama-config}
+    \small
+    \begin{tabularx}{\textwidth}{L{5cm}X}
+        \toprule
+        Параметр & Значение \\
+        \midrule
+        Runtime & llama.cpp server-cuda, build b12169-3ed7284f2 \\
+        Docker digest & {\scriptsize\ttfamily sha256:5bb779a449a18d8f\allowbreak 4333e9814e88774634\allowbreak 2fe555c528f5eabc92b2\allowbreak 093e32673a} \\
+        Файл SHA-256 & {\scriptsize\ttfamily d98cdcbd03e17ce476\allowbreak 81435b5150e34c1417f5\allowbreak 0b5c0019dd560e4882c5\allowbreak 745785} \\
+        Pipeline SHA-256 & {\scriptsize\ttfamily cfc09986bc008ec746\allowbreak 28ff54efeff4a1bcc3\allowbreak 19611601c52962f8e0fcd\allowbreak 77c844e} \\
+        Контекст / max output & 8192 / 4096 токенов \\
+        Sampling & temperature 0,3; top\_k 40; top\_p 0,95; min\_p 0,05 \\
+        Inference seeds & $2026+r$, где $r=0,1,2$ --- индекс повтора \\
+        Reasoning format & none \\
+        Structured output & Полные JSON Schema; ComponentPlan --- JSON-only \\
+        Pattern shortcut / RAG & Включён / выключен \\
+        Unstructured fallback & Выключен \\
+        Request retries / timeout & 2 / 600 с \\
+        Concurrency / max repairs & 1 / 2 \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Всего выполнено 216 случаев: 24 prompts, три повтора и три ветви генерации. Пик мониторинга --- 6536 MiB VRAM, 78 °C и 172,97 Вт. После остановки evaluation inference-сервера и monitor активных CUDA-процессов нет; наблюдалось 513 MiB used и 23 625 MiB free. Веса 30B сохранены для будущего эксперимента, но её inference-сервер и benchmark в этой серии не запускались.

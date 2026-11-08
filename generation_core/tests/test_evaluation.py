@@ -8,6 +8,7 @@ import pytest
 from pipeline.ablation import run_ablation
 from pipeline.direct import generate_direct_model
 from pipeline.evaluation import (
+    compare_model_reports,
     compare_report_sets,
     export_annotation_tasks,
     inter_annotator_agreement,
@@ -160,6 +161,42 @@ def test_paired_comparison_rejects_unfair_report_combinations():
         paired_metric_comparison(baseline, synthetic_report("full", {"a": [True]}, model="other"))
     with pytest.raises(ValueError, match="identical prompt_id/run"):
         paired_metric_comparison(baseline, synthetic_report("full", {"b": [True]}))
+    baseline["results"][0]["inference_seed"] = 2026
+    treatment = synthetic_report("full", {"a": [True]})
+    treatment["results"][0]["inference_seed"] = 2027
+    with pytest.raises(ValueError, match="inference_seed"):
+        paired_metric_comparison(baseline, treatment)
+
+
+def test_model_comparison_uses_matching_modes_and_allows_only_model_change():
+    def ablation(model, passed):
+        arms = {
+            mode: synthetic_report(mode, {"a": [passed], "b": [False]}, model=model)
+            for mode in ("direct", "typed_no_repair", "full")
+        }
+        return {
+            "kind": "llm_ablation",
+            "model": model,
+            "corpus_sha256": "corpus",
+            "pipeline_sha256": "pipeline",
+            "protocol_sha256": "protocol",
+            "protocol": {"corpus_role": "blind"},
+            "arms": arms,
+        }
+
+    result = compare_model_reports(
+        ablation("small", False),
+        ablation("large", True),
+        metrics=("behavior",),
+        bootstrap_samples=50,
+    )
+    assert result["kind"] == "paired_model_comparison"
+    assert len(result["comparisons"]) == 3
+    full = next(
+        item for item in result["comparisons"] if item["generation_mode"] == "full"
+    )
+    assert full["difference"] == 0.5
+    assert "mcnemar_holm_pvalue" in full
 
 
 def test_ablation_comparisons_include_multiplicity_correction():

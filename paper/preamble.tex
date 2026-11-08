@@ -1,0 +1,108 @@
+\documentclass[14pt,a4paper]{extreport}
+
+\usepackage{fontspec}
+\setmainfont{DejaVu Serif}
+\setsansfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}
+\usepackage[russian]{babel}
+
+\usepackage{geometry}
+\geometry{a4paper,left=30mm,right=15mm,top=20mm,bottom=20mm,footskip=15mm,headsep=10mm}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{indentfirst}
+\setlength{\parindent}{1.25cm}
+\emergencystretch=2em
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc,fit,backgrounds}
+
+\usepackage{booktabs,longtable,multirow,array,colortbl}
+\usepackage{tabularx}
+\newcolumntype{L}[1]{>{\raggedright\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{C}[1]{>{\centering\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+
+\usepackage{xcolor}
+\usepackage{listings}
+\lstset{
+    basicstyle=\small\ttfamily,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{gray}\itshape,
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=8pt,
+    frame=single,
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=4,
+    showstringspaces=false,
+    extendedchars=true
+}
+
+\usepackage[
+    colorlinks=true,
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue,
+    bookmarks=true,
+    bookmarksopen=true,
+    pdftitle={Методы и алгоритмы автоматизированной генерации системно-динамических моделей на основе больших языковых моделей},
+    pdfauthor={Илья Хакимов}
+]{hyperref}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\thepage}\renewcommand{\headrulewidth}{0pt}\renewcommand{\footrulewidth}{0pt}}
+
+\usepackage{titlesec}
+\titleformat{\chapter}[display]{\normalfont\Large\bfseries\centering}{\chaptertitlename\ \thechapter}{14pt}{\Large}
+\titlespacing*{\chapter}{0pt}{-20pt}{20pt}
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\itshape}{\thesubsubsection}{1em}{}
+
+\renewcommand{\thechapter}{\arabic{chapter}}
+\renewcommand{\thesection}{\thechapter.\arabic{section}}
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\thesubsection.\arabic{subsubsection}}
+
+\addto\captionsrussian{
+    \renewcommand{\contentsname}{СОДЕРЖАНИЕ}
+    \renewcommand{\chaptername}{ГЛАВА}
+    \renewcommand{\figurename}{Рис.}
+    \renewcommand{\tablename}{Таблица}
+    \renewcommand{\bibname}{СПИСОК ЛИТЕРАТУРЫ}
+    \renewcommand{\lstlistingname}{Листинг}
+}
+
+\usepackage{caption}
+\captionsetup[figure]{labelsep=endash,justification=centering,font=small}
+\captionsetup[table]{labelsep=endash,justification=justified,font=small,singlelinecheck=false}
+\captionsetup[lstlisting]{labelsep=endash,font=small}
+
+\newtheorem{definition}{Определение}[chapter]
+\newtheorem{theorem}{Теорема}[chapter]
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\floatname{algorithm}{Алгоритм}
+
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5cm,itemsep=2pt,topsep=4pt,parsep=2pt}
+\setlist[enumerate]{leftmargin=1.5cm,itemsep=2pt,topsep=4pt,parsep=2pt}
+\usepackage{float}
+\usepackage{csquotes}
+\usepackage{url}
+\def\UrlBreaks{\do\.\do\_\do\/\do\-}
+\newcommand{\codeid}[1]{\path{#1}}
+\usepackage{etoolbox}
+
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{2}

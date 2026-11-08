@@ -1,0 +1,273 @@
+{
+  "schema_version": "1.0",
+  "kind": "paired_ablation_analysis",
+  "provider": "local",
+  "model": "small",
+  "corpus_sha256": "36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18",
+  "pipeline_sha256": "cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e",
+  "protocol_sha256": "8a479929a7aa026261d795ad350d241ffe00039a12d672dd5661f1944dc0ebbc",
+  "corpus_role": "blind",
+  "comparisons": [
+    {
+      "metric": "executable",
+      "baseline": "direct",
+      "treatment": "typed_no_repair",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 53,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.7361111111111112,
+      "difference": 0.7083333333333334,
+      "discordant": {
+        "treatment_only": 51,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 8.881784197001252e-16,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2026,
+        "difference_ci95": [
+          0.5694444444444444,
+          0.8333333333333334
+        ]
+      },
+      "mcnemar_holm_pvalue": 1.7763568394002505e-15
+    },
+    {
+      "metric": "semantic",
+      "baseline": "direct",
+      "treatment": "typed_no_repair",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 50,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.6944444444444444,
+      "difference": 0.6666666666666666,
+      "discordant": {
+        "treatment_only": 48,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 7.105427357601002e-15,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2027,
+        "difference_ci95": [
+          0.5277777777777778,
+          0.7916666666666666
+        ]
+      },
+      "mcnemar_holm_pvalue": 1.4210854715202004e-14
+    },
+    {
+      "metric": "behavior",
+      "baseline": "direct",
+      "treatment": "typed_no_repair",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 49,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.6805555555555556,
+      "difference": 0.6527777777777778,
+      "discordant": {
+        "treatment_only": 47,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 1.4210854715202004e-14,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2028,
+        "difference_ci95": [
+          0.5138888888888888,
+          0.7916666666666666
+        ]
+      },
+      "mcnemar_holm_pvalue": 2.842170943040401e-14
+    },
+    {
+      "metric": "executable",
+      "baseline": "typed_no_repair",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 53,
+      "treatment_successes": 68,
+      "baseline_rate": 0.7361111111111112,
+      "treatment_rate": 0.9444444444444444,
+      "difference": 0.20833333333333326,
+      "discordant": {
+        "treatment_only": 15,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 6.103515625e-05,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2029,
+        "difference_ci95": [
+          0.09722222222222222,
+          0.3333333333333333
+        ]
+      },
+      "mcnemar_holm_pvalue": 6.103515625e-05
+    },
+    {
+      "metric": "semantic",
+      "baseline": "typed_no_repair",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 50,
+      "treatment_successes": 63,
+      "baseline_rate": 0.6944444444444444,
+      "treatment_rate": 0.875,
+      "difference": 0.18055555555555558,
+      "discordant": {
+        "treatment_only": 13,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 0.000244140625,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2030,
+        "difference_ci95": [
+          0.08333333333333333,
+          0.3055555555555556
+        ]
+      },
+      "mcnemar_holm_pvalue": 0.000244140625
+    },
+    {
+      "metric": "behavior",
+      "baseline": "typed_no_repair",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 49,
+      "treatment_successes": 61,
+      "baseline_rate": 0.6805555555555556,
+      "treatment_rate": 0.8472222222222222,
+      "difference": 0.16666666666666663,
+      "discordant": {
+        "treatment_only": 12,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 0.00048828125,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2031,
+        "difference_ci95": [
+          0.08333333333333333,
+          0.2638888888888889
+        ]
+      },
+      "mcnemar_holm_pvalue": 0.00048828125
+    },
+    {
+      "metric": "executable",
+      "baseline": "direct",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 68,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.9444444444444444,
+      "difference": 0.9166666666666666,
+      "discordant": {
+        "treatment_only": 66,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 2.710505431213761e-20,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2032,
+        "difference_ci95": [
+          0.8472222222222222,
+          0.9722222222222222
+        ]
+      },
+      "mcnemar_holm_pvalue": 8.131516293641283e-20
+    },
+    {
+      "metric": "semantic",
+      "baseline": "direct",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 63,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.875,
+      "difference": 0.8472222222222222,
+      "discordant": {
+        "treatment_only": 61,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 8.673617379884035e-19,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2033,
+        "difference_ci95": [
+          0.7218750000000003,
+          0.9583333333333334
+        ]
+      },
+      "mcnemar_holm_pvalue": 2.6020852139652106e-18
+    },
+    {
+      "metric": "behavior",
+      "baseline": "direct",
+      "treatment": "full",
+      "pairs": 72,
+      "prompt_clusters": 24,
+      "baseline_successes": 2,
+      "treatment_successes": 61,
+      "baseline_rate": 0.027777777777777776,
+      "treatment_rate": 0.8472222222222222,
+      "difference": 0.8194444444444444,
+      "discordant": {
+        "treatment_only": 59,
+        "baseline_only": 0
+      },
+      "mcnemar_exact_pvalue": 3.469446951953614e-18,
+      "cluster_bootstrap": {
+        "method": "percentile",
+        "cluster_unit": "prompt_id",
+        "confidence_level": 0.95,
+        "samples": 10000,
+        "seed": 2034,
+        "difference_ci95": [
+          0.6805555555555556,
+          0.9305555555555556
+        ]
+      },
+      "mcnemar_holm_pvalue": 1.0408340855860843e-17
+    }
+  ]
+}

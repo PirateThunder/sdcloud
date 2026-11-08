@@ -9,6 +9,48 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.6.1 — 2026-11-08
+
+- **Controlled локальная 8B**: на источнике `d7ee55d` выполнен frozen blind ablation
+  Qwen3-8B-Q4_K_M через llama.cpp CUDA: 24 prompts × 3 runs × 3 arms = **216 cases**.
+  Direct — 2,78% по всем метрикам; typed без repair — 73,61% executable,
+  69,44% semantic и 68,06% behavior; full — **94,44% executable, 87,50% semantic и
+  84,72% behavior** при repair rate 26,39% и average 30,988 с. Порог behavior 85%
+  формально не достигнут на 0,28 п.п. (61/72 вместо необходимых 62/72).
+  Infrastructure errors — 0; protocol deviations отсутствуют.
+- **Парный анализ**: full против typed_no_repair дал +20,83 п.п. executable,
+  +18,06 п.п. semantic и +16,67 п.п. behavior без ухудшившихся пар.
+  Для behavior 95% cluster CI — [8,33; 26,39] п.п., exact McNemar с Holm correction
+  p=0,000488. Все 72 пары каждого сравнения имеют одинаковые inference seeds
+  2026/2027/2028. Это результат конкретной 8B, quantization и runtime, а не
+  доказательство универсальности или преимущества над 30B.
+- **Ограничение эксперимента**: по решению владельца сопоставимый 30B-запуск отложен.
+  После 8B evaluation-сервер и monitor остановлены; активных CUDA-процессов нет,
+  VRAM — 513 MiB used / 23 625 MiB free. Пик мониторинга — 6536 MiB, 78 °C,
+  172,97 Вт. Скачанные 30B-веса сохранены для следующего раза.
+- **Failure analysis и экспертный пакет**: проверены все 216 case/prompt artifacts
+  и 123 model/simulation пары для исполняемых случаев. Сформированы 216 blind
+  annotation tasks; сохранены archetype mismatch, units, truncation и behavior
+  failures без подстройки генератора под frozen corpus. Два независимых эксперта,
+  Cohen's kappa и adjudication остаются `pending_human_annotation`.
+  Манифест — `evaluation/controlled-local-qwen3.json`, парные результаты —
+  `evaluation/controlled-local-qwen3-paired-analysis.json`; большие raw artifacts
+  остаются в gitignored `generation_core/out/`.
+- **Evaluation hardening**: `evaluate.py compare-models` сравнивает одинаковые
+  prompt/run/seed пары у разных моделей на одном pipeline и отклоняет несовпадение
+  corpus/protocol/LLM settings. Проверка одинаковых inference seeds добавлена и в
+  парный ablation. Это инструмент для будущего 30B-сравнения, а не выполненное сравнение.
+- **Продуктовый E2E**: добавлен `backend/tests/live_e2e.py` для настоящего REST
+  сценария OTP/refresh → три сообщения → две версии → simulation → три exports →
+  ownership. Изолированный стек дал **46 HTTP steps и 28/28 checks**; `GEN_HOST_PORT`
+  позволяет запускать его без конфликта с основным окружением. Ранее также пройдены
+  2/2 browser E2E. Отчёт — `backend/.test_tmp/rest-e2e-current.json`.
+- **Диплом**: обновлены экспериментальная глава, заключение, конфигурация llama.cpp,
+  протокол аннотации и команды воспроизведения. Независимая экспертная оценка и
+  controlled 30B явно сохранены как ограничения.
+- **Проверки**: **319 core, 20 backend и 12 frontend tests**; Ruff, Biome,
+  TypeScript, `uv lock --check` и production frontend build зелёные.
+
 ## 0.6.0 — 2026-11-08
 
 - **Opt-in dynamic local LLM routing**: добавлен `pipeline/routing.py` для выбора 8B/30B по

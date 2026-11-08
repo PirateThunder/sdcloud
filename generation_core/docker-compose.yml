@@ -94,7 +94,7 @@ services:
     volumes:
       - gen_work:/app/work_api
     ports:
-      - "127.0.0.1:58312:58312"
+      - "127.0.0.1:${GEN_HOST_PORT:-58312}:58312"
     depends_on:
       gen-migrate:
         condition: service_completed_successfully

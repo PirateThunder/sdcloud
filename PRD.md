@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core, backend и frontend 0.6.0 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
+**Статус:** generation_core, backend и frontend 0.6.1 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -548,3 +548,24 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
   `generation_core/out/dynamic-small-route-v2/`. Для 8B успешный повтор использовал 4096 output
   tokens после честно зафиксированного truncation при 2048. Dual residency на 24 GB не доказана;
   dynamic mode остаётся opt-in, а не production default.
+
+## 19. Controlled local 8B и продуктовый E2E (0.6.1)
+
+- Замороженный blind ablation локальной Qwen3-8B-Q4_K_M завершён: 216 случаев на
+  24 описаниях, три повтора и три режима. Full достиг 94,44% executable, 87,50%
+  semantic и 84,72% behavior; repair увеличил behavior на 16,67 п.п. относительно
+  typed_no_repair (95% cluster CI [8,33; 26,39] п.п., Holm p=0,000488).
+  Engineering target behavior 85% формально не достигнут на 0,28 п.п. Никакой
+  подстройки генератора по blind corpus после просмотра результатов не выполнялось.
+- Все 216 case/prompt artifacts и 123 model/simulation комплекта проверены.
+  Inference seeds совпадают в парных сравнениях, protocol deviations и infrastructure
+  errors отсутствуют. Сформирован пакет для двух независимых экспертов, но их разметка
+  и Cohen's kappa ещё не выполнены. Манифест и paired statistics находятся в `evaluation/`.
+- Сопоставимый запуск 30B отложен по решению владельца. После 8B evaluation
+  inference-сервер и GPU-monitor остановлены, CUDA-процессов нет. Исторические
+  результаты 30B на другом pipeline не используются как controlled size comparison.
+- Реальный REST E2E на изолированном стеке подтвердил OTP/refresh, порядок трёх
+  сообщений и идемпотентность, ответ без модели, вторую версию после правки,
+  simulation, Python/Vensim/XMILE exports и ownership: 46 HTTP steps, 28/28 checks.
+  Offline suite — 319 core, 20 backend и 12 frontend tests, 2/2 browser E2E;
+  Ruff, Biome, TypeScript, lockfiles и production build зелёные.

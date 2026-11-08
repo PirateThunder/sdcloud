@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.6.0**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.6.1**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -279,7 +279,18 @@ uv run python evaluate.py compare \
   --output out/cli-comparison.json
 ```
 
-Fixture подтверждает работу evaluation framework, а не качество реальной LLM. Для
+Для сравнения двух моделей на одинаковых `prompt_id/run/inference_seed` и одном pipeline:
+
+```bash
+uv run python evaluate.py compare-models \
+  --baseline out/local-8b-ablation.json \
+  --treatment out/local-30b-ablation.json \
+  --output out/local-model-comparison.json
+```
+
+Команда сравнивает одноимённые arms и отклоняет различия corpus, pipeline, protocol,
+inference settings или парных seed. Модель разрешается различать; runtime и прочие настройки
+должны совпадать. Fixture подтверждает работу evaluation framework, а не качество реальной LLM. Для
 confirmatory run используется новый `--prompts-file`, `--corpus-role blind`, defaults
 протокола (10 000 bootstrap samples) и предварительно зафиксированные prompts/model/source.
 Метка `blind` сама по себе не доказывает независимость: после просмотра результатов нельзя
@@ -304,6 +315,30 @@ uv run --env-file ../.env python benchmark.py \
   --artifacts-dir out/openrouter-ministral8b-ablation-v2-artifacts \
   --annotations out/openrouter-ministral8b-annotations-v2
 ```
+
+Отдельный controlled ablation локальной Qwen3-8B-Q4_K_M выполнен на commit
+`d7ee55d505d0f3bb360ae5adc4156e956ff6cee9` через llama.cpp с context 8192,
+max output 4096 и `LLM_COMPONENT_STRUCTURED_OUTPUT=0`. Результаты 216 случаев:
+
+- direct — 2/72 executable, semantic и behavior (2,78%);
+- typed_no_repair — 53/72 executable (73,61%), 50/72 semantic (69,44%),
+  49/72 behavior (68,06%);
+- full — 68/72 executable (94,44%), 63/72 semantic (87,50%), 61/72 behavior
+  (84,72%), repair rate 26,39%, average 30,988 с. Behavior ниже цели 85% на
+  0,28 п.п.; генератор после просмотра blind-результатов не настраивался.
+- full против typed_no_repair — +20,83 п.п. executable, +18,06 п.п. semantic,
+  +16,67 п.п. behavior; 95% cluster CI последнего эффекта [8,33; 26,39] п.п.,
+  Holm-adjusted p=0,000488. Во всех 72 парах каждого сравнения совпали
+  `prompt_id/run/inference_seed`; protocol deviations и infrastructure errors — 0.
+
+Манифест — [../evaluation/controlled-local-qwen3.json](../evaluation/controlled-local-qwen3.json),
+полная парная статистика —
+[../evaluation/controlled-local-qwen3-paired-analysis.json](../evaluation/controlled-local-qwen3-paired-analysis.json).
+Raw report, 216 case/prompt artifacts, 123 model/simulation комплекта и 216 blind
+annotation tasks сохранены в gitignored `out/local-qwen3-8b-q4km-*`.
+Сопоставимый 30B-запуск отложен: `compare-models` готов, но фактического сравнения
+размеров в этой серии нет. Evaluation inference-сервер и GPU monitor остановлены,
+активных CUDA-процессов нет. Независимые эксперты пока не участвовали.
 
 Для executable/semantic/behavior рассчитываются парная разница долей, двусторонний точный
 тест Макнимара и 95% percentile cluster bootstrap. Повторная выборка выполняется по целым

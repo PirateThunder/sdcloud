@@ -1,0 +1,277 @@
+\chapter{ЭКСПЕРИМЕНТАЛЬНАЯ ОЦЕНКА}
+
+\section{Протокол и границы доказательства}
+
+Оценка разделена на инженерную проверку, LLM benchmark и внешнюю interoperability-проверку. Эти уровни не смешиваются. Unit-тест доказывает поведение конкретного кода, но не обобщение на новые предметные области. LLM benchmark оценивает конкретный pipeline и checkpoint, а Vensim benchmark --- численную совместимость поддерживаемого импорта без вызова LLM.
+
+Основными вопросами являются:
+
+\begin{itemize}
+    \item может ли ограниченный pipeline возвращать исполняемые и поведенчески согласованные модели;
+    \item какие классы ошибок остаются после validation и bounded repair;
+    \item как результаты различаются между локальными моделями и конфигурациями;
+    \item какая доля внешних Vensim-моделей корректно импортируется и воспроизводится.
+\end{itemize}
+
+Гипотезы H1--H3 из введения проверяются отдельным controlled ablation: прямой LLM $\rightarrow$ typed builder без repair $\rightarrow$ полный pipeline. Такие парные серии выполнены для Ministral-8B-2512 и локальной Qwen3-8B-Q4\_K\_M на одном frozen corpus. Эффект оценивается относительно измеренного baseline для каждой конфигурации, а не предполагается без сравнения. Результаты не обобщаются автоматически на другие модели или предметные области.
+
+\section{Наборы данных и метрики}
+
+Для LLM-оценки используются:
+
+\begin{itemize}
+    \item acceptance2 --- 8 описаний, по 3 генерации;
+    \item acceptance3 --- 8 описаний, по 3 генерации;
+    \item acceptance4 --- 6 описаний, по 3 генерации;
+    \item composition --- 4 описания, по одной генерации.
+\end{itemize}
+
+Итого выполнено 70 генераций на 26 описаниях. Повторные запуски одного описания показывают вариативность, но не образуют 70 независимых предметных задач. Наборы уже использовались при развитии генератора и поэтому на текущем этапе считаются regression, а не независимым blind test.
+
+Дополнительный robustness corpus содержит 17 описаний: русские и английские примеры, шестистадийная ODE-сеть, задержки, очереди, переключение расхода и пять ожидаемых отказов. После первого прогона были исправлены конкретные проблемы нормализации, поэтому полный повторный результат этого corpus не рассматривается как независимый.
+
+Для пропорции успехов $p=k/n$ приводится доля и, где это уместно, 95\% интервал Уилсона:
+
+\begin{equation}
+    \frac{p+\frac{z^2}{2n}\pm z\sqrt{\frac{p(1-p)}{n}+\frac{z^2}{4n^2}}}{1+\frac{z^2}{n}},\qquad z\approx1{,}96.
+    \label{eq:wilson}
+\end{equation}
+
+Интервал не учитывает дополнительную зависимость повторов одного prompt. Для последующего blind evaluation требуется cluster-aware анализ или paired test с учётом описания.
+
+\section{Результаты локальной 30B}
+
+Более ранняя версия pipeline была проверена на \codeid{QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ} на RTX 5090 Laptop 24 GB. Pipeline hash --- {\scriptsize\ttfamily 7ee6697c02f943c7\allowbreak 71b19ae5273b0b9b\allowbreak 0972ffe574e7ced1\allowbreak 98a6b02dcd916405}.
+
+\begin{table}[H]
+    \centering
+    \caption{Результаты локальной 30B на прежнем pipeline}
+    \label{tab:results-30b}
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        Набор & Executable & Semantic & Behavior & Среднее время, с \\
+        \midrule
+        acceptance2 & 95,83\% & 95,83\% & 95,83\% & 14,008 \\
+        acceptance3 & 100\% & 100\% & 87,50\% & 21,898 \\
+        acceptance4 & 100\% & 100\% & 100\% & 11,714 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Эти результаты относятся к конкретной версии pipeline и не должны автоматически переноситься на последующие изменения или служить доказательством эффекта размера модели. Провайдер, quantization и pipeline отличаются от последующей 8B-серии.
+
+\section{Результаты локальной 8B}
+
+Qwen3-8B-Q4\_K\_M проверялась на тех же acceptance-наборах с `concurrency=1` и `max\_repairs=2`. Для всех четырёх отчётов pipeline hash --- {\scriptsize\ttfamily 62695337cf3f4912\allowbreak 7909d0cb567fa98e\allowbreak 95d37faf98c9df85\allowbreak 4ec169f851d37f91}.
+
+\begin{table}[H]
+    \centering
+    \caption{Результаты Qwen3-8B-Q4\_K\_M}
+    \label{tab:results-8b}
+    \small
+    \begin{tabular}{lccccc}
+        \toprule
+        Набор & Executable & Semantic & Behavior & Repair rate & Время, с \\
+        \midrule
+        acceptance2 & 70,83\% & 70,83\% & 70,83\% & 83,33\% & 62,991 \\
+        acceptance3 & 79,17\% & 79,17\% & 79,17\% & 83,33\% & 65,035 \\
+        acceptance4 & 61,11\% & 61,11\% & 61,11\% & 100\% & 76,070 \\
+        composition & 100\% & 100\% & 75,00\% & 0\% & 21,492 \\
+        \midrule
+        Итого & 72,86\% & 72,86\% & 71,43\% & 82,86\% & 64,683 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Целевые пороги 90/85/85\% не достигнуты. Поэтому утверждение о стабильной замене 30B на 8B не делается. Результат демонстрирует работоспособность локального inference, но одновременно показывает значимость качества структурированного вывода и ограниченного repair.
+
+\begin{table}[H]
+    \centering
+    \caption{Wilson 95\% интервалы для 8B}
+    \label{tab:wilson-8b}
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Набор & Успешных & Всего & Интервал для behavior \\
+        \midrule
+        acceptance2 & 17 & 24 & 50,83--85,09\% \\
+        acceptance3 & 19 & 24 & 59,53--90,76\% \\
+        acceptance4 & 11 & 18 & 38,62--79,69\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Composition включает один случай, где stock принимает отрицательное значение $-2$. Оно не было скрыто clamp: модель прошла semantic-проверку, но не прошла behavior-проверку неотрицательности. Это показывает необходимость раздельной оценки структуры и ожидаемого поведения.
+
+\section{Результаты OpenRouter 8B на frozen pipeline}
+
+После исправлений проведён отдельный regression на Ministral-8B-2512 через официальный Mistral endpoint OpenRouter, без GPU и 14B. Полная ComponentPlan Schema и pattern shortcut включены явно, RAG отключён. Pipeline hash --- {\scriptsize\ttfamily a5fc3038a94ea886\allowbreak 0b80363e3f3e4d19\allowbreak 0b4bec339312d74d01\allowbreak f5af5d0a7bb8ff}.
+
+\begin{table}[H]
+    \centering
+    \caption{Frozen regression Ministral-8B-2512}
+    \label{tab:ministral-regression}
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Набор & Executable & Semantic & Behavior \\
+        \midrule
+        acceptance2 & 100\% & 100\% & 100\% \\
+        acceptance3 & 79,17\% & 79,17\% & 79,17\% \\
+        acceptance4 & 100\% & 100\% & 100\% \\
+        \midrule
+        Сводно, 66 случаев & 92,42\% & 92,42\% & 92,42\% \\
+        Stress, 28 случаев & 100\% & 100\% & 100\% \\
+        Original, 26 случаев & 100\% & 100\% & 100\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Сводный порог 90/85/85\% достигнут, однако acceptance3 отдельно остаётся ниже 85\%. Поэтому результат нельзя назвать равномерно стабильным для всех классов моделей. Эти наборы использовались при разработке и считаются regression, а не независимым подтверждением. Для confirmatory-вывода отдельно фиксируются новый blind corpus, три ветви генерации и парный статистический анализ.
+
+\section{Blind ablation на Ministral-8B-2512}
+
+Для независимого корпуса из 24 описаний выполнены три ветви по три генерации на prompt (72 случая в каждой). Корпус и pipeline были заморожены до запуска, а результаты не использовались для подстройки генератора.
+
+\begin{table}[H]
+    \centering
+    \caption{Blind ablation Ministral-8B-2512}
+    \label{tab:ministral-ablation}
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Ветвь & Executable & Semantic & Behavior \\
+        \midrule
+        Direct & 2,78\% & 2,78\% & 2,78\% \\
+        Typed, без repair & 95,83\% & 90,28\% & 90,28\% \\
+        Full, с repair & 97,22\% & 90,28\% & 90,28\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Full по сравнению с direct даёт +94,44 п.п. executable и +87,5 п.п. semantic/behavior. Это подтверждает вклад typed pipeline, а не эффективность одношаговой генерации. Вклад repair ограничен: +1,39 п.п. executable и 0 п.п. semantic/behavior; парный тест Макнимара с поправкой Holm даёт $p=1,0$. Следовательно, отдельный эффект repair не продемонстрирован.
+
+Annotation export содержит 216 заданий и 141 model artifact. Независимые эксперты и adjudication пока не выполнялись, поэтому semantic/behavior метрики остаются автоматическими, а не экспертной оценкой. Сохраняются failure cases: статические archetypes, derivative-topology mismatch и ошибки units.
+
+\section{Controlled ablation локальной Qwen3-8B}
+
+На том же frozen corpus проведена отдельная серия с локальной Qwen3-8B-Q4\_K\_M через llama.cpp CUDA. Источник соответствует commit \codeid{d7ee55d}. Pipeline SHA-256:
+\begin{center}
+\scriptsize\ttfamily cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e
+\end{center}
+Для каждой ветви выполнено 72 случая; соответствующие prompt/run получили одинаковый inference seed из серии 2026, 2027, 2028. Контекст составил 8192 токена, лимит ответа --- 4096 токена, температура --- 0,3. Протокол нарушений не содержит; инфраструктурные ошибки отсутствуют.
+
+\begin{table}[H]
+    \centering
+    \caption{Blind ablation локальной Qwen3-8B-Q4\_K\_M}
+    \label{tab:local-qwen8b-ablation}
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        Ветвь & Executable & Semantic & Behavior & Среднее время, с \\
+        \midrule
+        Direct & 2,78\% & 2,78\% & 2,78\% & 32,886 \\
+        Typed, без repair & 73,61\% & 69,44\% & 68,06\% & 23,835 \\
+        Full, с repair & 94,44\% & 87,50\% & 84,72\% & 30,988 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Full по сравнению с direct увеличивает executable на 91,67 п.п., semantic на 84,72 п.п. и behavior на 81,94 п.п.; для всех трёх метрик Holm-adjusted $p<10^{-16}$. Однако direct здесь является лишь одношаговой генерацией полного JSON этой конкретной 8B с лимитом 4096 токенов, а не универсальной оценкой возможностей LLM.
+
+\begin{table}[H]
+    \centering
+    \caption{Парный эффект repair у локальной Qwen3-8B}
+    \label{tab:local-qwen8b-repair-effect}
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Метрика & Разница, п.п. & 95\% cluster CI, п.п. & Holm $p$ \\
+        \midrule
+        Executable & +20,83 & [9,72; 33,33] & 0,000061 \\
+        Semantic & +18,06 & [8,33; 30,56] & 0,000244 \\
+        Behavior & +16,67 & [8,33; 26,39] & 0,000488 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+В каждом сравнении full и typed без repair 15, 13 и 12 случаев соответственно улучшились после repair и ни один не ухудшился. Repair использовался в 19 из 72 случаев (26,39\%). Этот результат отличается от нулевого эффекта repair у Ministral, поэтому вклад компонента рассматривается как зависящий от модели и конфигурации, а не как универсальная константа.
+
+Инженерные пороги executable 90\% и semantic 85\% пройдены, но behavior 61/72 = 84,72\% формально ниже 85\% на 0,28 п.п.; для прохождения требовалось 62 успешных случая. Порог не переопределялся после просмотра результата.
+
+Среди 11 behavior failures managed forest трижды выбрал шаблон логистического роста вместо шаблона возобновимого ресурса. Фактический идентификатор --- \codeid{logistic_growth}; ожидался \codeid{renewable_resource}. Три случая relaxation cycle дали units-ошибку или статический выход; два periodic relaxation остановлены на units и один material response --- на truncation после repair. В tracer начальное значение оказалось 100 вместо явно указанных 16 mg, а в parcel дополнительный непрерывный приток привёл к 52 item вместо ожидаемого пустого буфера. Эти случаи сохранены как ограничения без последующей подстройки к blind corpus.
+
+Все 216 case/prompt artifacts и 123 model/simulation комплекта для исполняемых случаев проверены. Сформирован ещё один пакет из 216 заданий для независимой аннотации; разметка людьми не выполнялась. Сопоставимый запуск 30B отложен, поэтому эта серия не отвечает на вопрос о влиянии размера модели.
+
+\section{Внешняя Vensim-совместимость}
+
+Использован корпус SDXorg/test-models \cite{sdxorg_test_models}: 154 Vensim-файла, из которых 148 имеют эталонные траектории. Проверка выполняется без LLM: импорт $\rightarrow$ симуляция $\rightarrow$ сравнение с `output.tab` или `output.csv` при $rtol=10^{-3}$ и $atol=10^{-5}$.
+
+\begin{table}[H]
+    \centering
+    \caption{Результаты SDXorg}
+    \label{tab:sdxorg-results}
+    \small
+    \begin{tabular}{lccc}
+        \toprule
+        Показатель & Количество & Доля reference & Доля imported \\
+        \midrule
+        Reference-модели & 148 & 100\% & --- \\
+        Импортировано & 63 & 42,57\% & 100\% \\
+        Симулировано & 63 & 42,57\% & 100\% \\
+        Совпало с эталоном & 62 & 41,89\% & 98,41\% \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Поддерживаются исключения `:EXCEPT:`, complementary subranges, dimension aliases, частичные массивы и element-specific stock derivatives. Шесть macro-моделей, включая stock и вложенные вызовы, совпали с эталонами. Прежние совпадения сохранены при расширении импорта, но полная поддержка Vensim не заявляется.
+
+Rössler исследован отдельно. Основной float64 Euler имеет 52 failed points среди 9603 stock-точек возле нуля. Независимая проверка float32 Euler даёт ноль failed points при тех же допусках. Это указывает на reference precision, а не на ошибку уравнений. Основной solver не переключался на float32, а допуски не ослаблялись.
+
+\section{Анализ ошибок}
+
+В LLM-прогонах преобладают следующие классы:
+
+\begin{enumerate}
+    \item \textbf{Malformed JSON и schema errors.} Даже после repair модель может вернуть список вместо ModelBrief или неправильный тип параметра.
+    \item \textbf{Truncation.} Причина \codeid{finish_reason=length} сохраняется в отчёте вместо попытки принять неполный JSON.
+    \item \textbf{Component identity conflicts.} Например, одновременно создаются \codeid{natural_removal_coefficient} и \codeid{natural_removal}. Они не объединяются автоматически, поскольку имена не доказывают эквивалентность.
+    \item \textbf{Derivative/topology mismatch.} Явная производная не соответствует заявленным source/target, поэтому модель отклоняется.
+    \item \textbf{Behavior failures.} Исполняемая модель может оставаться статической или выходить за предполагаемые границы.
+    \item \textbf{Variance.} Один prompt может давать разные результаты при повторе; отсутствие bitwise-детерминированности LLM признаётся.
+\end{enumerate}
+
+Дополнительные проверки устранили подстановку физических units при явном `state`, неправильное отклонение нулевого равновесия и строковые units без нормализации. Эти изменения покрыты regression-тестами, но их влияние на независимую генеративную обобщаемость должно оцениваться отдельно.
+
+\section{Ограничения исследования}
+
+Во-первых, acceptance-наборы использовались для итеративной разработки и поэтому отражают regression-устойчивость. Отдельный corpus из 24 описаний был заморожен до controlled ablation Ministral и локальной Qwen3-8B; после анализа его результатов последующие изменения метода потребуют нового unseen corpus. Ни regression, ни один blind corpus не доказывают универсальную генерацию в произвольной предметной области.
+
+Во-вторых, controlled ablation выполнен для Ministral-8B-2512 через OpenRouter и локальной Qwen3-8B-Q4\_K\_M через llama.cpp, но сопоставимый 30B-запуск отложен. Нельзя обобщать эффект pipeline на другие checkpoint и условия inference или делать из этой серии вывод о преимуществе размера модели.
+
+В-третьих, автоматический semantic pass не заменяет экспертную оценку. Нужны два независимых эксперта, общая аннотационная инструкция и показатель согласованности.
+
+В-четвёртых, pipeline включает недетерминированную LLM. Повторы уменьшают неопределённость оценки, но не обещают побайтовую воспроизводимость. Точные конфигурации моделей, vLLM plugin и llama.cpp runtime должны быть зафиксированы в воспроизводимом пакете.
+
+В-пятых, Vensim importer охватывает лишь подмножество языка. Другие конструкции требуют отдельной проверки, а общий matched rate не должен скрываться за показателем внутри поддерживаемого подмножества.
+
+Наконец, production deployment с HTTPS и SMTP не выполнялся. Выводы относятся к исследовательскому прототипу и локальному/тестовому контуру.
+
+\section{Протокол дальнейшей независимой проверки}
+
+Для проверки H1--H3 реализован evaluation framework с тремя режимами: direct, typed pipeline без repair и полный pipeline. Direct не использует ModelBrief, ComponentPlan, pattern library, RAG или repair; все режимы разделяют безопасное представление выражений, проверку и симуляцию. Протокол, corpus и pipeline имеют отдельные SHA-256. Реализованы парный точный тест Макнимара, cluster bootstrap по prompt ID, Holm correction, обезличенный экспорт заданий и расчёт Cohen's kappa до adjudication. Реальные controlled ablation на Ministral-8B-2512 и локальной Qwen3-8B-Q4\_K\_M выполнены; независимая экспертная разметка и adjudication ещё не проведены.
+
+Для проверки H1--H3 предлагается следующий порядок:
+
+\begin{enumerate}
+    \item Зафиксировать pipeline, prompts, checkpoints, quantization, repair budget и окружение до формирования blind corpus.
+    \item Сформировать независимый набор описаний из разных областей и уровней сложности, включая отрицательные примеры. Не использовать его для последующей подстройки.
+    \item Сравнить прямую генерацию, builder без repair и полный pipeline на одном LLM и одинаковых ресурсах.
+    \item Получить две независимые экспертные оценки с adjudication и Cohen's kappa или Krippendorff's alpha.
+    \item Рассчитать доверительные интервалы и paired effect, учитывая clustering повторов по prompt.
+    \item Опубликовать corpus, annotation guide, конфигурацию, скрипты и failure cases.
+    \item Только после этого оценивать RAG, QLoRA или более крупные модели как самостоятельные переменные.
+\end{enumerate}
+
+Такой протокол позволяет превратить инженерный прототип в проверяемое исследование, не подменяя научную значимость количеством реализованных функций.
