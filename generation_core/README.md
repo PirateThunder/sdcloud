@@ -4,7 +4,7 @@
 системно-динамических моделей. Работает через CLI и внутренний REST API, не импортирует
 backend и не зависит от frontend.
 
-Версия — **0.6.1**. Исходная спецификация — [PRD.md](PRD.md).
+Версия — **0.6.2**. Исходная спецификация — [PRD.md](PRD.md).
 
 ## Что реализовано
 
@@ -316,29 +316,71 @@ uv run --env-file ../.env python benchmark.py \
   --annotations out/openrouter-ministral8b-annotations-v2
 ```
 
-Отдельный controlled ablation локальной Qwen3-8B-Q4_K_M выполнен на commit
-`d7ee55d505d0f3bb360ae5adc4156e956ff6cee9` через llama.cpp с context 8192,
-max output 4096 и `LLM_COMPONENT_STRUCTURED_OUTPUT=0`. Результаты 216 случаев:
+Controlled ablation локальных Qwen3-8B и Qwen3-30B-A3B выполнен на commit
+`d7ee55d505d0f3bb360ae5adc4156e956ff6cee9` через один llama.cpp CUDA runtime с context
+8192, max output 4096 и `LLM_COMPONENT_STRUCTURED_OUTPUT=0`. Для каждой модели —
+24 prompts × 3 runs × 3 arms = 216 случаев; corpus, pipeline, protocol, inference seeds
+и остальные LLM settings совпадают. Генератор между сериями не настраивался.
 
-- direct — 2/72 executable, semantic и behavior (2,78%);
-- typed_no_repair — 53/72 executable (73,61%), 50/72 semantic (69,44%),
-  49/72 behavior (68,06%);
-- full — 68/72 executable (94,44%), 63/72 semantic (87,50%), 61/72 behavior
-  (84,72%), repair rate 26,39%, average 30,988 с. Behavior ниже цели 85% на
-  0,28 п.п.; генератор после просмотра blind-результатов не настраивался.
-- full против typed_no_repair — +20,83 п.п. executable, +18,06 п.п. semantic,
-  +16,67 п.п. behavior; 95% cluster CI последнего эффекта [8,33; 26,39] п.п.,
-  Holm-adjusted p=0,000488. Во всех 72 парах каждого сравнения совпали
-  `prompt_id/run/inference_seed`; protocol deviations и infrastructure errors — 0.
+| Модель | Режим | Executable | Semantic | Behavior | Среднее время, с |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8B Q4_K_M | direct | 2,78% | 2,78% | 2,78% | 32,886 |
+| 8B Q4_K_M | typed_no_repair | 73,61% | 69,44% | 68,06% | 23,835 |
+| 8B Q4_K_M | full | 94,44% | 87,50% | 84,72% | 30,988 |
+| 30B-A3B Q4_K_M | direct | 1,39% | 1,39% | 1,39% | 16,707 |
+| 30B-A3B Q4_K_M | typed_no_repair | 77,78% | 70,83% | 69,44% | 14,199 |
+| 30B-A3B Q4_K_M | full | **98,61%** | **90,28%** | **88,89%** | 16,532 |
 
-Манифест — [../evaluation/controlled-local-qwen3.json](../evaluation/controlled-local-qwen3.json),
-полная парная статистика —
-[../evaluation/controlled-local-qwen3-paired-analysis.json](../evaluation/controlled-local-qwen3-paired-analysis.json).
-Raw report, 216 case/prompt artifacts, 123 model/simulation комплекта и 216 blind
-annotation tasks сохранены в gitignored `out/local-qwen3-8b-q4km-*`.
-Сопоставимый 30B-запуск отложен: `compare-models` готов, но фактического сравнения
-размеров в этой серии нет. Evaluation inference-сервер и GPU monitor остановлены,
-активных CUDA-процессов нет. Независимые эксперты пока не участвовали.
+Full 30B проходит инженерные пороги 90/85/85: 71/72 executable, 65/72 semantic и
+64/72 behavior; repair rate — 20,83%. Full 8B проходит executable и semantic, но
+behavior ниже 85% на 0,28 п.п. Это точечные оценки, а не доказательство универсальной
+стабильности или превосходства одного checkpoint.
+
+Full против typed_no_repair у 30B даёт +20,83 п.п. executable, +19,44 п.п. semantic
+и +19,44 п.п. behavior без ухудшившихся пар. Для behavior 95% cluster CI —
+[8,33; 31,94] п.п., Holm-adjusted p=0,000122. У 8B эффект repair составляет +16,67 п.п.
+behavior (CI [8,33; 26,39], p=0,000488). Таким образом, вклад typed pipeline и repair
+подтверждён отдельно в обеих конфигурациях.
+
+`evaluate.py compare-models` выполнен для всех 72 пар каждого режима. В full разница
+30B − 8B составляет +4,17 п.п. executable, +2,78 п.п. semantic и +4,17 п.п. behavior;
+95% cluster CI последнего — [−1,39; 11,11] п.п., exact McNemar p=0,453125,
+Holm-adjusted p=1,0. Все full-сравнения после correction имеют p=1,0: статистически
+значимого преимущества 30B над 8B не выявлено. Кроме того, dense 8B и MoE 30B-A3B —
+разные архитектуры, поэтому это сравнение checkpoint, а не изолированный scaling law.
+Среднее время full у 30B описательно ниже (16,532 против 30,988 с); теста значимости
+latency не проводилось.
+
+Манифесты — [8B](../evaluation/controlled-local-qwen3.json) и
+[30B](../evaluation/controlled-local-qwen3-30b.json), парная статистика —
+[30B ablation](../evaluation/controlled-local-qwen3-30b-paired-analysis.json) и
+[8B/30B comparison](../evaluation/controlled-local-qwen3-model-comparison.json).
+Для 30B проверены 216 case/prompt artifacts и 128 model/simulation комплектов;
+SHA-256 локального и удалённого raw report совпали. Остались восемь behavior failures:
+три archetype mismatch managed forest, три relaxation cycle, отрицательный parcel buffer
+и один duplicate component identifier в short infusion. Они сохранены без подстройки
+под уже раскрытый corpus.
+
+Сформированы отдельные 216 blind annotation tasks для 30B. Независимые эксперты пока не
+участвовали; автоматические oracles не заменяют их разметку. После 30B inference-сервер,
+benchmark container и GPU monitor остановлены, evaluation-контейнеры удалены; активных
+CUDA-процессов нет, наблюдалось 487 MiB used / 23 651 MiB free. Пик мониторинга —
+19 216 MiB, 75 °C и 170,87 Вт. Дополнительные GPU-запуски в этой серии не выполняются.
+
+После controlled серий исправлены общие механизмы, а не benchmark-specific IDs:
+double-count вложенных тегов archetype, русские склонения Van der Pol, эквивалентный
+duplicate outflow `conditional_inflow`/`first_order`, queue timestep и проверка
+stock bounds. Конфликт коэффициентов по-прежнему отклоняется, значения не
+подменяются clamp. Сохранённые short infusion и parcel plans прошли targeted
+regression без LLM/GPU: один компонент/уникальные IDs и неотрицательная очередь
+с timestep 0,0625. Прежние проценты не пересчитывались; для оценки улучшения
+нужен новый unseen corpus.
+
+Полный архив — `out/archives/sdcloud-controlled-qwen3-0.6.2.tar.gz`, его checksum —
+`evaluation/controlled-local-qwen3-artifacts.sha256`. Объединённый публичный пакет
+`out/archives/sdcloud-expert-review-0.6.2.tar.gz` содержит 432 задания и 251 artifact
+в анонимизированных группах A/B без answer keys. Два человека-эксперта ещё не
+участвовали; приватное group mapping передавать экспертам нельзя.
 
 Для executable/semantic/behavior рассчитываются парная разница долей, двусторонний точный
 тест Макнимара и 95% percentile cluster bootstrap. Повторная выборка выполняется по целым

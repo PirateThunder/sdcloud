@@ -29,13 +29,13 @@
 
 Пик мониторинга составил 21 352 MiB VRAM, 80 °C и 176,91 Вт. После завершения vLLM занято 225 MiB. Значения памяти зависят от выбранной доли `gpu-memory-utilization` и размера KV-cache и не являются минимальными требованиями checkpoint.
 
-\section{Controlled llama.cpp-серия}
+\section{Controlled llama.cpp-серии}
 
-Отдельная controlled серия выполнена только для 8B, без одновременного размещения 30B. Проверялся тот же checkpoint и revision, но другой inference runtime и protocol; результаты не смешиваются с прежней acceptance-таблицей.
+Controlled серии 8B и 30B-A3B выполнены последовательно на одном GPU, без одновременного размещения моделей. Использованы одинаковые runtime, source, corpus и inference settings; результаты не смешиваются с прежними acceptance-таблицами.
 
 \begin{table}[H]
     \centering
-    \caption{Параметры controlled локальной Qwen3-8B}
+    \caption{Общие параметры controlled локальных Qwen3}
     \label{tab:controlled-llama-config}
     \small
     \begin{tabularx}{\textwidth}{L{5cm}X}
@@ -44,7 +44,6 @@
         \midrule
         Runtime & llama.cpp server-cuda, build b12169-3ed7284f2 \\
         Docker digest & {\scriptsize\ttfamily sha256:5bb779a449a18d8f\allowbreak 4333e9814e88774634\allowbreak 2fe555c528f5eabc92b2\allowbreak 093e32673a} \\
-        Файл SHA-256 & {\scriptsize\ttfamily d98cdcbd03e17ce476\allowbreak 81435b5150e34c1417f5\allowbreak 0b5c0019dd560e4882c5\allowbreak 745785} \\
         Pipeline SHA-256 & {\scriptsize\ttfamily cfc09986bc008ec746\allowbreak 28ff54efeff4a1bcc3\allowbreak 19611601c52962f8e0fcd\allowbreak 77c844e} \\
         Контекст / max output & 8192 / 4096 токенов \\
         Sampling & temperature 0,3; top\_k 40; top\_p 0,95; min\_p 0,05 \\
@@ -59,4 +58,33 @@
     \end{tabularx}
 \end{table}
 
-Всего выполнено 216 случаев: 24 prompts, три повтора и три ветви генерации. Пик мониторинга --- 6536 MiB VRAM, 78 °C и 172,97 Вт. После остановки evaluation inference-сервера и monitor активных CUDA-процессов нет; наблюдалось 513 MiB used и 23 625 MiB free. Веса 30B сохранены для будущего эксперимента, но её inference-сервер и benchmark в этой серии не запускались.
+\begin{table}[H]
+    \centering
+    \caption{Идентификация controlled checkpoints}
+    \label{tab:controlled-checkpoints}
+    \small
+    \begin{tabularx}{\textwidth}{L{4cm}XX}
+        \toprule
+        Параметр & 8B & 30B-A3B \\
+        \midrule
+        Repository & Qwen/Qwen3-8B-GGUF & Qwen/Qwen3-30B-A3B-GGUF \\
+        Revision & {\scriptsize\ttfamily 7c41481f57cb9591\allowbreak 6b40956ab2f0b139b296d974} & {\scriptsize\ttfamily e4d4bafdfb96a411\allowbreak a163846265362aceb0b9c63a} \\
+        Файл & Qwen3-8B-Q4\_K\_M.gguf & Qwen3-30B-A3B-Q4\_K\_M.gguf \\
+        Размер файла, байт & 5 027 783 488 & 18 556 685 824 \\
+        Параметров всего & 8 190 735 360 & 30 532 122 624 \\
+        Alias & small & large \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+SHA-256 файла 8B:
+\begin{center}
+\scriptsize\ttfamily d98cdcbd03e17ce476\allowbreak 81435b5150e34c1417f5\allowbreak 0b5c0019dd560e4882c5\allowbreak 745785
+\end{center}
+SHA-256 файла 30B-A3B:
+\begin{center}
+\scriptsize\ttfamily 0d003f6662faee786e\allowbreak d5da3e31b29c978de5ae5d\allowbreak 275c8794c606a7f3c01aa8f5
+\end{center}
+Проверка контрольных сумм выполнена до inference; revision и quantization зафиксированы в манифестах.
+
+Для каждой модели выполнено 216 случаев: 24 prompts, три повтора и три ветви генерации. Пик 8B-мониторинга --- 6536 MiB VRAM, 78 °C и 172,97 Вт; после её серии наблюдалось 513 MiB used и 23 625 MiB free. Пик 30B-A3B --- 19 216 MiB VRAM, 75 °C и 170,87 Вт; после автоматической остановки inference и monitor --- 487 MiB used и 23 651 MiB free. Активных CUDA-процессов после каждой остановки не наблюдалось. Evaluation-контейнеры 30B удалены, дальнейшие GPU-запуски в этой серии не выполняются.

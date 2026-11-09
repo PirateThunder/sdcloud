@@ -595,3 +595,32 @@ def test_scheduled_flow_changes_rate_without_duplicate_stocks():
     series = result.variables["charge_fraction"]
     assert series[result.time.index(10)] == pytest.approx(0.8, rel=1e-8)
     assert series[-1] == pytest.approx(0.4, abs=1e-6)
+
+
+def test_simulation_rejects_stock_bound_violation_instead_of_returning_it():
+    from pipeline.exceptions import SimulationError
+
+    model = document(
+        [
+            {
+                "kind": "queue",
+                "stock": "work_items",
+                "arrivals": "incoming",
+                "service": "completed",
+                "service_time": 0.25,
+                "max_service": 8,
+                "arrival_rate": 0,
+                "initial": 6,
+                "units": {"item": 1},
+                "time_unit": "hour",
+            }
+        ],
+        final_time=15,
+        time_step=0.25,
+        unit="hour",
+    )
+    with pytest.raises(SimulationError, match="STOCK_BOUNDS_VIOLATION"):
+        simulate_model(
+            model,
+            SimulationParameters(time_step=0.5, saveper=0.5, integration_method="euler"),
+        )

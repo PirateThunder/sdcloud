@@ -1,0 +1,25 @@
+{
+	admin off
+	email {$SDCLOUD_TLS_EMAIL}
+}
+
+{$SDCLOUD_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy back-api:61230
+	}
+
+	handle {
+		reverse_proxy frontend:54733
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+}

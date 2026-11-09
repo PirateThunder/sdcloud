@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0",
+  "kind": "release_reproducibility_manifest",
+  "version": "0.6.2",
+  "date": "2026-11-09",
+  "status": "release_candidate_verified",
+  "controlled_evaluation": {
+    "source_commit": "d7ee55d505d0f3bb360ae5adc4156e956ff6cee9",
+    "pipeline_sha256": "cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e",
+    "corpus_sha256": "36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18",
+    "protocol_sha256": "8a479929a7aa026261d795ad350d241ffe00039a12d672dd5661f1944dc0ebbc",
+    "models": ["Qwen3-8B-Q4_K_M", "Qwen3-30B-A3B-Q4_K_M"],
+    "cases_per_model": 216,
+    "manifest_8b": "evaluation/controlled-local-qwen3.json",
+    "manifest_30b": "evaluation/controlled-local-qwen3-30b.json",
+    "paired_comparison": "evaluation/controlled-local-qwen3-model-comparison.json",
+    "post_benchmark_source_changes": true,
+    "old_metrics_rewritten": false
+  },
+  "post_benchmark_hardening": {
+    "report": "evaluation/post-benchmark-hardening.json",
+    "llm_inference": false,
+    "gpu_used": false,
+    "targeted_tests": 79,
+    "changes": [
+      "nested archetype tag scoring and Russian inflection",
+      "equivalent conditional outflow deduplication with conflict rejection",
+      "queue timestep limits",
+      "post-simulation stock bounds without clamp"
+    ]
+  },
+  "archives": {
+    "owner": {
+      "path": "out/archives/sdcloud-controlled-qwen3-0.6.2.tar.gz",
+      "bytes": 36513832,
+      "members": 4787,
+      "sha256": "b2b9a0ff922cc5e47d3bb46d67b71ef7991401599814376fe6aeceda3ca10475",
+      "contains_private_answer_keys": true,
+      "verified": true
+    },
+    "expert_public": {
+      "path": "out/archives/sdcloud-expert-review-0.6.2.tar.gz",
+      "bytes": 17710182,
+      "tasks": 432,
+      "model_artifacts": 251,
+      "groups": ["A", "B"],
+      "sha256": "cda3542945d015027f70a46216480fec57326bb6b37f6d3f7cc6bff33c115488",
+      "contains_answer_keys": false,
+      "verified": true
+    },
+    "expert_private": {
+      "path": "out/archives/sdcloud-expert-review-private-0.6.2.tar.gz",
+      "bytes": 13916,
+      "sha256": "a47d3f7956c2dd4d2ef8ba01595789b35e37d9eda17e8a3d26c7b8bad0a51df4",
+      "share_with_experts": false,
+      "verified": true
+    },
+    "checksums": [
+      "evaluation/controlled-local-qwen3-artifacts.sha256",
+      "evaluation/expert-review-packages.sha256"
+    ]
+  },
+  "expert_review": {
+    "status": "pending_human_annotation",
+    "required_independent_human_experts": 2,
+    "tasks": 432,
+    "model_artifacts": 251,
+    "assistant_annotation_counts_as_independent": false,
+    "agreement_pending": ["Cohen's kappa", "raw agreement", "adjudication"]
+  },
+  "production": {
+    "profile": "docker-compose.production.yml",
+    "caddy_image": "caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d",
+    "preflight": {
+      "secure_dummy_configuration_passed": true,
+      "insecure_configuration_rejected": true,
+      "services_started_by_preflight": false,
+      "acme_requests": false
+    },
+    "isolated_smoke": {
+      "status": "passed",
+      "backend_version": "0.6.2",
+      "backend_ready": true,
+      "frontend_login_http": 200,
+      "openapi_http": 404,
+      "backup_dumps_created_and_validated": 2,
+      "temporary_containers_volumes_and_dumps_removed": true,
+      "external_llm_or_smtp_calls": false
+    },
+    "external_deployment": {
+      "status": "not_performed",
+      "dns_and_acme": "requires_real_domain",
+      "smtp_delivery": "requires_real_smtp_credentials",
+      "backup_restore_on_separate_environment": "not_performed"
+    }
+  },
+  "verification": {
+    "generation_core_tests": 325,
+    "backend_tests": 22,
+    "frontend_tests": 12,
+    "ruff": "passed",
+    "biome_and_typescript": "passed",
+    "uv_lock_check": "passed",
+    "frontend_production_build": "passed",
+    "paper": {
+      "path": "paper/build/main.pdf",
+      "pages": 65,
+      "citations_used_and_defined": 23,
+      "undefined_or_uncited_references": 0,
+      "latex_errors": 0,
+      "typography_and_font_warnings_remain": true
+    },
+    "browser_e2e": {
+      "scenarios": 2,
+      "status": "previously_passed_not_rerun_for_documentation_and_config_changes"
+    },
+    "gpu_used_for_hardening_or_tests": false
+  },
+  "pending_external_actions": [
+    "Two independent human experts annotate the public package and return two CSV files",
+    "Compute agreement and adjudicate before claiming expert-rated quality",
+    "Provide real DNS and SMTP credentials for external deployment",
+    "Evaluate future generator changes on a fresh frozen unseen corpus"
+  ]
+}

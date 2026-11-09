@@ -39,6 +39,15 @@ def test_selector_does_not_match_substrings_or_replace_explicit_topology():
     assert select_pattern(predator).id == "predator_prey"
 
 
+def test_selector_avoids_nested_tag_double_count_and_handles_russian_inflection():
+    renewable = select_pattern(
+        "A renewable forest regenerates toward carrying capacity with a fractional harvest"
+    )
+    assert renewable is not None and renewable.id == "renewable_resource"
+    oscillator = select_pattern("Построй осциллятор Ван дер Поля с устойчивым предельным циклом")
+    assert oscillator is not None and oscillator.id == "van_der_pol_oscillator"
+
+
 def test_predator_equilibrium_is_valid_but_does_not_satisfy_dynamic_behavior():
     from pipeline.ir import lit
     from pipeline.semantics import semantic_issues

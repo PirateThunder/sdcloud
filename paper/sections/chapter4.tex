@@ -13,7 +13,7 @@
     \item какая доля внешних Vensim-моделей корректно импортируется и воспроизводится.
 \end{itemize}
 
-Гипотезы H1--H3 из введения проверяются отдельным controlled ablation: прямой LLM $\rightarrow$ typed builder без repair $\rightarrow$ полный pipeline. Такие парные серии выполнены для Ministral-8B-2512 и локальной Qwen3-8B-Q4\_K\_M на одном frozen corpus. Эффект оценивается относительно измеренного baseline для каждой конфигурации, а не предполагается без сравнения. Результаты не обобщаются автоматически на другие модели или предметные области.
+Гипотезы H1--H3 из введения проверяются отдельным controlled ablation: прямой LLM $\rightarrow$ typed builder без repair $\rightarrow$ полный pipeline. Такие парные серии выполнены для Ministral-8B-2512, локальной Qwen3-8B-Q4\_K\_M и Qwen3-30B-A3B-Q4\_K\_M на одном frozen corpus. Эффект оценивается относительно измеренного baseline для каждой конфигурации, а не предполагается без сравнения. Локальные Qwen3 дополнительно сравниваются между собой на одинаковых prompt/run/seed. Результаты не обобщаются автоматически на другие модели или предметные области.
 
 \section{Наборы данных и метрики}
 
@@ -202,7 +202,73 @@ Full по сравнению с direct увеличивает executable на 91
 
 Среди 11 behavior failures managed forest трижды выбрал шаблон логистического роста вместо шаблона возобновимого ресурса. Фактический идентификатор --- \codeid{logistic_growth}; ожидался \codeid{renewable_resource}. Три случая relaxation cycle дали units-ошибку или статический выход; два periodic relaxation остановлены на units и один material response --- на truncation после repair. В tracer начальное значение оказалось 100 вместо явно указанных 16 mg, а в parcel дополнительный непрерывный приток привёл к 52 item вместо ожидаемого пустого буфера. Эти случаи сохранены как ограничения без последующей подстройки к blind corpus.
 
-Все 216 case/prompt artifacts и 123 model/simulation комплекта для исполняемых случаев проверены. Сформирован ещё один пакет из 216 заданий для независимой аннотации; разметка людьми не выполнялась. Сопоставимый запуск 30B отложен, поэтому эта серия не отвечает на вопрос о влиянии размера модели.
+Все 216 case/prompt artifacts и 123 model/simulation комплекта для исполняемых случаев проверены. Сформирован ещё один пакет из 216 заданий для независимой аннотации; разметка людьми не выполнялась. На момент этой серии сопоставимый запуск 30B ещё не был выполнен; его результаты приведены ниже без изменения исходного pipeline или corpus.
+
+\section{Controlled ablation локальной Qwen3-30B-A3B}
+
+Следующая серия выполнена только для Qwen3-30B-A3B-Q4\_K\_M на том же source \codeid{d7ee55d}, frozen corpus, llama.cpp image и inference-настройках, что и локальная 8B. Обе модели проверялись последовательно на одном RTX 5090 Laptop; в follow-up серии 8B endpoint не запускался. Pipeline SHA-256 остался:
+\begin{center}
+\scriptsize\ttfamily cfc09986bc008ec746\allowbreak 28ff54efeff4a1bcc3\allowbreak 19611601c52962f8e0fcd\allowbreak 77c844e
+\end{center}
+Для каждого prompt/run сохранены inference seeds 2026--2028, context 8192, output limit 4096, temperature 0,3 и concurrency 1. Генератор между сериями не изменялся.
+
+\begin{table}[H]
+    \centering
+    \caption{Blind ablation локальной Qwen3-30B-A3B-Q4\_K\_M}
+    \label{tab:local-qwen30b-ablation}
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        Ветвь & Executable & Semantic & Behavior & Среднее время, с \\
+        \midrule
+        Direct & 1,39\% & 1,39\% & 1,39\% & 16,707 \\
+        Typed, без repair & 77,78\% & 70,83\% & 69,44\% & 14,199 \\
+        Full, с repair & 98,61\% & 90,28\% & 88,89\% & 16,532 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Full прошёл инженерные пороги 90/85/85\%: 71/72 executable, 65/72 semantic и 64/72 behavior. Repair использовался в 15 из 72 случаев (20,83\%). Graph pass также составил 71/72, поэтому отдельный справочный target graph = 100\% не достигнут. Infrastructure errors и protocol deviations отсутствуют.
+
+Full по сравнению с typed без repair увеличивает executable на 20,83 п.п. (95\% cluster CI [9,72; 33,33], Holm $p=0{,}000061$), semantic на 19,44 п.п. (CI [8,33; 31,94], $p=0{,}000122$) и behavior на 19,44 п.п. (CI [8,33; 31,94], $p=0{,}000122$). Улучшились соответственно 15, 14 и 14 пар, ухудшившихся пар нет. Относительно direct полный pipeline даёт +97,22 п.п. executable, +88,89 п.п. semantic и +87,5 п.п. behavior; все три Holm-adjusted $p<10^{-18}$. Как и для 8B, direct остаётся специфическим одношаговым baseline, а не универсальной оценкой возможностей checkpoint.
+
+Средняя длительность full у 30B-A3B составила 16,532 с против 30,988 с у 8B на том же GPU/runtime при concurrency 1. Это описательное наблюдение для конкретной MoE-модели; статистический тест latency не проводился, а общее число параметров не равно числу активных параметров на токен.
+
+В full остались восемь behavior failures. Managed forest трижды выбрал \codeid{logistic_growth} вместо \codeid{renewable_resource}. Три relaxation cycle не воспроизвели требуемый Van der Pol archetype или ожидаемое релаксационное поведение. В одном parcel service буфер завершил симуляцию на $-2$ вместо 0. Единственный non-executable full case --- short infusion с конфликтом идентификаторов \codeid{Clearance_flow_coefficient} и \codeid{Clearance_flow} после repair. Эти случаи сохранены как ограничения, а не как новые правила подстройки к уже раскрытому corpus.
+
+Проверены все 216 case/\allowbreak prompt artifacts и 128 model/\allowbreak simulation комплектов; SHA-256 локального и удалённого raw report совпали. Сформирован отдельный пакет из 216 blind-заданий, но независимая экспертная разметка остаётся следующим этапом.
+
+\section{Парное сравнение локальных 8B и 30B-A3B}
+
+Команда \codeid{evaluate.py} \codeid{compare-models} проверила совпадение corpus, pipeline, protocol, LLM settings и prompt/\allowbreak run/\allowbreak inference seed пар. Для каждой метрики учтены три режима, а Holm correction применена внутри семейства из трёх сравнений. Основной практический интерес представляет full pipeline.
+
+\begin{table}[H]
+    \centering
+    \caption{Парная разница 30B-A3B минус 8B в full pipeline}
+    \label{tab:local-model-comparison}
+    \footnotesize
+    \begin{tabular}{lccccc}
+        \toprule
+        Метрика & 8B & 30B-A3B & Разница, п.п. & 95\% cluster CI, п.п. & Holm $p$ \\
+        \midrule
+        Executable & 94,44\% & 98,61\% & +4,17 & [$-2,78$; 12,50] & 1,0 \\
+        Semantic & 87,50\% & 90,28\% & +2,78 & [$-2,78$; 9,72] & 1,0 \\
+        Behavior & 84,72\% & 88,89\% & +4,17 & [$-1,39$; 11,11] & 1,0 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Для executable четыре пары улучшились и одна ухудшилась (exact McNemar $p=0{,}375$ до correction), для semantic --- три и одна ($p=0{,}625$), для behavior --- пять и две ($p=0{,}453125$). Все доверительные интервалы включают ноль, а после Holm correction $p=1{,}0$. Следовательно, 30B-A3B проходит заранее заданные инженерные пороги, но статистически значимое преимущество над 8B на этом corpus не продемонстрировано. Обратное утверждение об эквивалентности моделей также не следует: интервалы допускают как отрицательный, так и положительный эффект.
+
+Кроме того, Qwen3-8B является dense checkpoint, а Qwen3-30B-A3B --- mixture-of-experts. Они различаются не только общим числом параметров, поэтому серия сравнивает два практических варианта локального inference, но не идентифицирует изолированный scaling law. Для более сильного вывода нужны новые независимые описания и заранее зафиксированный протокол; подстройка под текущий corpus недопустима.
+
+\section{Post-benchmark deterministic hardening}
+
+После завершения controlled серий реализованы четыре узких исправления общих механизмов. Во-первых, вложенные теги archetype больше не учитываются дважды, а русское основание тега Van der Pol покрывает склонения. Во-вторых, эквивалентный outflow в \codeid{conditional_inflow} и \codeid{first_order} дедуплицируется только при совпадении механизма и коэффициента; конфликтные варианты отклоняются. В-третьих, неявный timestep queue ограничен четвертью service time, а явный шаг больше service time отклоняется. Наконец, движок проверяет stock bounds после симуляции: нарушение при \codeid{on\_violation=error} не возвращается как успешный результат, скрытый clamp не применяется.
+
+Проверка выполнена без LLM и GPU на сохранённых промежуточных планах. Для short infusion нормализация оставила один компонент и уникальные идентификаторы. Для parcel service timestep составил 0,0625; минимальное и финальное значение очереди оказались около $2{,}05\times10^{-24}$, то есть отрицательный выброс устранён численной политикой, а не присвоением ожидаемого ответа. Добавлены отдельные regressions на конфликт коэффициентов и на отклонение bounds violation при ручном увеличении timestep.
+
+Эти результаты являются targeted engineering regression и не заменяют новый controlled benchmark. Показатели 8B/30B выше относятся к прежнему pipeline hash и не пересчитываются задним числом. Для оценки влияния исправлений на генеративное качество требуется новый unseen corpus с заранее зафиксированными oracles; никакого улучшения процентов на основании разобранных примеров не заявляется.
 
 \section{Внешняя Vensim-совместимость}
 
@@ -246,9 +312,9 @@ Rössler исследован отдельно. Основной float64 Euler �
 
 \section{Ограничения исследования}
 
-Во-первых, acceptance-наборы использовались для итеративной разработки и поэтому отражают regression-устойчивость. Отдельный corpus из 24 описаний был заморожен до controlled ablation Ministral и локальной Qwen3-8B; после анализа его результатов последующие изменения метода потребуют нового unseen corpus. Ни regression, ни один blind corpus не доказывают универсальную генерацию в произвольной предметной области.
+Во-первых, acceptance-наборы использовались для итеративной разработки и поэтому отражают regression-устойчивость. Отдельный corpus из 24 описаний был заморожен до controlled ablation Ministral и локальных Qwen3; после анализа его результатов последующие изменения метода потребуют нового unseen corpus. Ни regression, ни один blind corpus не доказывают универсальную генерацию в произвольной предметной области.
 
-Во-вторых, controlled ablation выполнен для Ministral-8B-2512 через OpenRouter и локальной Qwen3-8B-Q4\_K\_M через llama.cpp, но сопоставимый 30B-запуск отложен. Нельзя обобщать эффект pipeline на другие checkpoint и условия inference или делать из этой серии вывод о преимуществе размера модели.
+Во-вторых, controlled ablation выполнен для Ministral-8B-2512 через OpenRouter и локальных Qwen3-8B-Q4\_K\_M и Qwen3-30B-A3B-Q4\_K\_M через llama.cpp. Парное сравнение двух локальных моделей не выявило статистически значимого преимущества 30B-A3B после Holm correction. Нельзя обобщать эффект pipeline на другие checkpoint и условия inference, объявлять модели эквивалентными или выделять из этой серии чистый эффект числа параметров: dense 8B и MoE 30B-A3B различаются архитектурой.
 
 В-третьих, автоматический semantic pass не заменяет экспертную оценку. Нужны два независимых эксперта, общая аннотационная инструкция и показатель согласованности.
 
@@ -260,7 +326,7 @@ Rössler исследован отдельно. Основной float64 Euler �
 
 \section{Протокол дальнейшей независимой проверки}
 
-Для проверки H1--H3 реализован evaluation framework с тремя режимами: direct, typed pipeline без repair и полный pipeline. Direct не использует ModelBrief, ComponentPlan, pattern library, RAG или repair; все режимы разделяют безопасное представление выражений, проверку и симуляцию. Протокол, corpus и pipeline имеют отдельные SHA-256. Реализованы парный точный тест Макнимара, cluster bootstrap по prompt ID, Holm correction, обезличенный экспорт заданий и расчёт Cohen's kappa до adjudication. Реальные controlled ablation на Ministral-8B-2512 и локальной Qwen3-8B-Q4\_K\_M выполнены; независимая экспертная разметка и adjudication ещё не проведены.
+Для проверки H1--H3 реализован evaluation framework с тремя режимами: direct, typed pipeline без repair и полный pipeline. Direct не использует ModelBrief, ComponentPlan, pattern library, RAG или repair; все режимы разделяют безопасное представление выражений, проверку и симуляцию. Протокол, corpus и pipeline имеют отдельные SHA-256. Реализованы парный точный тест Макнимара, cluster bootstrap по prompt ID, Holm correction, обезличенный экспорт заданий и расчёт Cohen's kappa до adjudication. Реальные controlled ablation на Ministral-8B-2512, локальной Qwen3-8B-Q4\_K\_M и Qwen3-30B-A3B-Q4\_K\_M выполнены; независимая экспертная разметка и adjudication ещё не проведены.
 
 Для проверки H1--H3 предлагается следующий порядок:
 

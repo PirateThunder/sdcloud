@@ -805,3 +805,104 @@ def test_coupled_linear_ode_step_is_limited_by_nested_coefficients():
     series = result.variables["s"]
     assert max(abs(value) for value in series) < 10
     assert sum(left * right < 0 for left, right in zip(series, series[1:], strict=False)) >= 6
+
+
+def conditional_with_transfer(coefficient=None, time_constant=2):
+    return {
+        "components": [
+            {
+                "kind": "conditional_inflow",
+                "stock": "amount",
+                "inflow": "dose",
+                "outflow": "clearance",
+                "rate": 4,
+                "start_time": 0.25,
+                "end_time": 1,
+                "elimination_rate": 0.5,
+                "initial": 1,
+                "units": {"mg": 1},
+                "time_unit": "minute",
+            },
+            {
+                "kind": "first_order",
+                "source": "amount",
+                "target": "cloud:sink",
+                "flow": "clearance",
+                "coefficient": coefficient,
+                "time_constant": time_constant,
+                "initial_source": 1,
+                "initial_target": 0,
+                "source_units": {"mg": 1},
+                "target_units": None,
+                "time_unit": "minute",
+            },
+        ],
+        "time": None,
+        "assumptions": [],
+    }
+
+
+def test_equivalent_conditional_outflow_is_deduplicated():
+    normalized = normalize_component_payload(conditional_with_transfer())
+    assert len(normalized["components"]) == 1
+    model = document(normalized["components"], final_time=6, time_step=0.25, unit="minute")
+    assert sum(item.id == "clearance" for item in model.variables if item.kind == "flow") == 1
+    assert sum(item.kind == "constant" for item in model.variables) == 4
+    result = simulate_model(model, adaptive())
+    assert result.variables["amount"][0] == 1
+    assert min(result.variables["amount"]) >= 0
+
+
+def test_conflicting_conditional_outflow_is_rejected():
+    normalized = normalize_component_payload(
+        conditional_with_transfer(coefficient=0.75, time_constant=None)
+    )
+    assert len(normalized["components"]) == 2
+    with pytest.raises(ModelValidationError, match="duplicate conditional outflow"):
+        build_components(normalized["components"], TimeSettings(unit="minute"))
+
+
+def test_queue_time_step_preserves_nonnegative_stock_after_arrivals_stop():
+    from pipeline.schemas import SimulationParameters
+
+    queue = {
+        "kind": "queue",
+        "stock": "work_items",
+        "arrivals": "incoming",
+        "service": "completed",
+        "service_time": 0.25,
+        "max_service": 8,
+        "arrival_rate": 10,
+        "arrival_end_time": 2,
+        "initial": 6,
+        "units": {"item": 1},
+        "time_unit": "hour",
+    }
+    components = ComponentPlan.model_validate({"components": [queue]}).components
+    settings = TimeSettings(unit="hour", final_time=15, time_step=0.5, saveper=0.5)
+    normalized = normalize_inferred_time(settings, "Use a 15 hour horizon.", components)
+    assert normalized.time_step == pytest.approx(0.0625)
+    model = document([queue], final_time=15, time_step=normalized.time_step, unit="hour")
+    result = simulate_model(model, SimulationParameters(integration_method="euler"))
+    assert min(result.variables["work_items"]) >= 0
+    assert result.variables["work_items"][-1] == pytest.approx(0, abs=1e-9)
+
+
+def test_queue_rejects_explicit_oversized_euler_step():
+    queue = {
+        "kind": "queue",
+        "stock": "work_items",
+        "arrivals": "incoming",
+        "service": "completed",
+        "service_time": 0.25,
+        "max_service": 8,
+        "arrival_rate": 0,
+        "initial": 6,
+        "units": {"item": 1},
+        "time_unit": "hour",
+    }
+    with pytest.raises(ModelValidationError, match="time_step <= service_time"):
+        build_components(
+            [queue],
+            TimeSettings(unit="hour", final_time=15, time_step=0.5, saveper=0.5),
+        )

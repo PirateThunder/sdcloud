@@ -1,6 +1,6 @@
 # PRD: переписывание sdCloud на модульно-микросервисную архитектуру
 
-**Статус:** generation_core, backend и frontend 0.6.1 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; тесты и E2E зелёные, production deployment не выполнен
+**Статус:** generation_core, backend и frontend 0.6.2 реализованы; OpenRouter и локальная 30B прошли quality targets на original и held-out corpus; production HTTPS/SMTP profile подготовлен, внешний deployment не выполнен
 **Порядок реализации:** `generation_core → backend → frontend`  
 **Источник функциональности:** `../sdcloud_old/code`  
 **Архитектурные ориентиры:** `../piratepress`, `../piratepitch`
@@ -523,7 +523,7 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
 - Локальная 30B (`QuantTrio/Qwen3-VL-30B-A3B-Instruct-AWQ`, RTX 5090, concurrency=1): исходный 26×3 — 98,7% по всем метрикам; held-out 16×3 — 97,9% executable/semantic и 95,8% behavior. Pipeline hash обоих отчётов — `fd76128a730941bac144ddb0d0fb987ae710bf7a93c4fa63ebdcd59ae3637017`.
 - Проверки: 143 core tests, 20 backend tests, 12 frontend tests, 2/2 browser E2E; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. Local quality gate пройден; production deployment не выполнялся.
 
-## 18. Opt-in dynamic 8B/30B local inference (Unreleased)
+## 18. Opt-in dynamic 8B/30B local inference (0.6.0)
 
 - В `generation_core/pipeline/routing.py` добавлен динамический local router. При каждой новой
   генерации он считывает свободную VRAM через `nvidia-smi` (локально или по SSH для WSL) и
@@ -569,3 +569,65 @@ Backend gate из `generation_core/PRD.md` выполнен: backend испол�
   simulation, Python/Vensim/XMILE exports и ownership: 46 HTTP steps, 28/28 checks.
   Offline suite — 319 core, 20 backend и 12 frontend tests, 2/2 browser E2E;
   Ruff, Biome, TypeScript, lockfiles и production build зелёные.
+
+## 20. Controlled local 30B и paired model comparison (0.6.2)
+
+- На неизменных source `d7ee55d`, corpus, protocol, llama.cpp image и inference settings
+  выполнен отдельный ablation только Qwen3-30B-A3B-Q4_K_M: 216 случаев, seeds
+  2026/2027/2028, concurrency=1. 8B inference в этой follow-up серии не запускался,
+  генератор между моделями не изменялся. Direct — 1,39% по всем метрикам;
+  typed_no_repair — 77,78% executable, 70,83% semantic и 69,44% behavior; full —
+  **98,61% executable, 90,28% semantic и 88,89% behavior** при repair rate 20,83%
+  и average 16,532 с. Все point-estimate targets 90/85/85 пройдены; graph — 98,61%,
+  поэтому отдельный reference target graph=100% не достигнут.
+- Full против typed_no_repair улучшает executable на 20,83 п.п., semantic и behavior
+  на 19,44 п.п.; ухудшившихся пар нет. Для behavior 95% cluster CI — [8,33; 31,94]
+  п.п., Holm p=0,000122. Это подтверждает вклад repair в конкретной 30B-конфигурации.
+- Выполнен `evaluate.py compare-models` для 8B и 30B на одинаковых prompt/run/seed.
+  В full разница 30B − 8B равна +4,17 п.п. executable, +2,78 п.п. semantic и
+  +4,17 п.п. behavior. Для behavior CI [−1,39; 11,11] п.п., exact McNemar
+  p=0,453125, Holm p=1,0; остальные full-метрики также имеют Holm p=1,0.
+  Прохождение targets 30B не превращается в утверждение о статистически доказанном
+  превосходстве над 8B. Dense 8B и MoE 30B-A3B различаются архитектурой, поэтому
+  чистый эффект числа параметров этой серией не идентифицируется.
+- Проверены 216 case/prompt artifacts и 128 model/simulation комплектов; hash
+  local/remote raw report совпадает, protocol deviations и infrastructure errors — 0.
+  Остались восемь behavior failures: managed forest (3), relaxation cycle (3),
+  отрицательный parcel buffer (1) и duplicate component identifier в short infusion (1).
+  Сформированы 216 blind annotation tasks; независимые эксперты и Cohen's kappa
+  остаются `pending_human_annotation`. Для будущих исправлений нужен новый unseen corpus.
+- Манифест — `evaluation/controlled-local-qwen3-30b.json`, ablation statistics —
+  `evaluation/controlled-local-qwen3-30b-paired-analysis.json`, сравнение моделей —
+  `evaluation/controlled-local-qwen3-model-comparison.json`. Пик GPU-мониторинга —
+  19 216 MiB, 75 °C, 170,87 Вт. После прогона inference/monitor остановлены,
+  evaluation-контейнеры удалены, CUDA-процессов нет; дополнительные GPU-запуски
+  в этой серии не выполняются. Offline suite — 319 core, 20 backend и 12 frontend
+  tests; Ruff, Biome, TypeScript, lockfiles и production build зелёные.
+
+## 21. Post-benchmark hardening, expert handoff и production profile (0.6.2)
+
+- Добавлена дедупликация `conditional_inflow` и эквивалентного `first_order` только
+  при совпадении stock/flow/units/initial/time_unit и коэффициента (включая взаимно
+  обратные coefficient/time constant). Конфликт отклоняется. Archetype selector не
+  считает вложенный короткий тег дважды, русские теги поддерживают склонения.
+  Для queue неявный timestep ограничен `service_time/4`, явный шаг больше
+  `service_time` отклоняется. После симуляции `stock.bounds` проверяется с
+  `on_violation=error/warn`; скрытого clamp нет. Сохранённые short infusion и parcel
+  plans подтверждают исправления без LLM/GPU; это targeted regression, а не новый
+  benchmark. Для генеративной оценки требуется новый unseen corpus.
+- Полный owner archive — `out/archives/sdcloud-controlled-qwen3-0.6.2.tar.gz`,
+  checksum — `evaluation/controlled-local-qwen3-artifacts.sha256`. Публичный
+  `out/archives/sdcloud-expert-review-0.6.2.tar.gz` содержит 432 задания и 251
+  model artifact в анонимизированных группах A/B, но не answer keys или group mapping.
+  Приватное соответствие сохранено отдельно. Два человека-эксперта и Cohen's kappa
+  остаются обязательным следующим этапом и не имитируются ассистентом.
+- Добавлены `docker-compose.production.yml`, pinned Caddy, automatic HTTPS,
+  healthchecks, resource limits и log rotation. Production запрещает dev OTP и
+  требует JWT/OTP secrets, SMTP host/from, HTTPS CORS и внутренний API key.
+  `deploy/check-production.sh` выполняет preflight без service/ACME startup;
+  `deploy/backup.sh` сохраняет обе DB с checksums в gitignored `backups/`.
+  Preflight и изолированный production-config smoke подтверждают health/readiness,
+  но реальный внешний deployment, DNS/ACME и SMTP-доставка не выполнялись.
+- Обновлены README, PRD и диплом. Последний дополнен post-benchmark regression,
+  архивами, llama.cpp citation и экспертным протоколом. Новые GPU-прогоны не
+  выполнялись и не требуются для этого этапа.

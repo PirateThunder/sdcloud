@@ -59,6 +59,10 @@ class Settings(BaseSettings):
                 raise ValueError("BACK_JWT_SECRET and BACK_OTP_SECRET are required outside local")
             if self.email_dev_code:
                 raise ValueError("BACK_EMAIL_DEV_CODE is allowed only in local/test")
+            if not self.smtp_host:
+                raise ValueError("BACK_SMTP_HOST is required outside local/test")
+            if not (self.smtp_from or self.smtp_user):
+                raise ValueError("BACK_SMTP_FROM or BACK_SMTP_USER is required outside local/test")
         return self
 
 

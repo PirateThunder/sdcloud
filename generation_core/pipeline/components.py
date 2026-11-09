@@ -744,6 +744,39 @@ def normalize_component_payload(response: dict, *, default_time_unit: str | None
         seen.add(signature)
         unique_components.append(item)
     components = unique_components
+
+    def duplicate_conditional_outflow(conditional: dict, transfer: dict) -> bool:
+        if (
+            conditional.get("stock") != transfer.get("source")
+            or conditional.get("outflow") != transfer.get("flow")
+            or conditional.get("units") != transfer.get("source_units")
+            or conditional.get("initial") != transfer.get("initial_source")
+            or conditional.get("time_unit") != transfer.get("time_unit")
+            or not str(transfer.get("target", "")).startswith("cloud:")
+        ):
+            return False
+        elimination = conditional.get("elimination_rate")
+        coefficient = transfer.get("coefficient")
+        time_constant = transfer.get("time_constant")
+        if isinstance(coefficient, int | float) and not isinstance(coefficient, bool):
+            return math.isclose(elimination, coefficient, rel_tol=1e-9, abs_tol=1e-12)
+        if (
+            isinstance(time_constant, int | float)
+            and not isinstance(time_constant, bool)
+            and time_constant > 0
+        ):
+            return math.isclose(elimination, 1 / time_constant, rel_tol=1e-9, abs_tol=1e-12)
+        return False
+
+    conditionals = [item for item in components if item.get("kind") == "conditional_inflow"]
+    components = [
+        item
+        for item in components
+        if item.get("kind") != "first_order"
+        or not any(
+            duplicate_conditional_outflow(conditional, item) for conditional in conditionals
+        )
+    ]
     delays = [item for item in components if item.get("kind") == "delay"]
     components = [
         item
@@ -911,6 +944,13 @@ def _duplicate_delay_consumption(delay: DelaySpec, transfer: FirstOrderSpec) -> 
 
 
 def _validate_component_composition(components: list[ComponentSpec]) -> None:
+    for conditional in (item for item in components if isinstance(item, ConditionalInflowSpec)):
+        for transfer in (item for item in components if isinstance(item, FirstOrderSpec)):
+            if transfer.source == conditional.stock and transfer.flow == conditional.outflow:
+                raise ModelValidationError(
+                    f"duplicate conditional outflow {conditional.outflow!r}: conditional_inflow "
+                    "already includes this mechanism; use one consistent elimination rate"
+                )
     delays = [item for item in components if isinstance(item, DelaySpec)]
     transfers = [item for item in components if isinstance(item, FirstOrderSpec)]
     for delay in delays:
@@ -1047,6 +1087,8 @@ def _time_step_limits(components: list[ComponentSpec], duration: float) -> list[
         elif isinstance(item, ConditionalInflowSpec):
             if item.elimination_rate > 0:
                 limits.append(accuracy_limit(item.elimination_rate))
+        elif isinstance(item, QueueSpec):
+            limits.append(item.service_time / 4)
         elif isinstance(item, OdeStockSpec):
             parameters = {parameter.id: parameter.value for parameter in item.parameters}
             for term in item.terms:
@@ -1126,6 +1168,13 @@ def build_components(
             raise ModelValidationError(
                 f"incompatible units: component time_unit must match time.unit={settings.unit!r}: {mismatched}"
             )
+        for queue in (item for item in components if isinstance(item, QueueSpec)):
+            if settings.time_step > queue.service_time:
+                raise ModelValidationError(
+                    f"queue {queue.stock!r} requires time_step <= service_time "
+                    f"({queue.service_time}) to preserve nonnegative stock under Euler; "
+                    "reduce time_step and saveper"
+                )
         ratio = settings.saveper / settings.time_step
         if not math.isclose(ratio, round(ratio), rel_tol=1e-9, abs_tol=1e-9):
             raise ModelValidationError("time.saveper must be an integer multiple of time.time_step")

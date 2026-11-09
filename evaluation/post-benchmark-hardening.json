@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "kind": "targeted_engineering_regression",
+  "status": "completed",
+  "version": "0.6.2",
+  "date": "2026-11-09",
+  "scope": "Saved failure-case component plans only; no LLM inference and no GPU use",
+  "controlled_metrics_recomputed": false,
+  "mechanisms": {
+    "archetype_scoring": "Nested shorter tags are not counted twice; Russian tag stems cover inflection",
+    "component_identity": "Equivalent conditional_inflow/first_order outflows are deduplicated only when stock, flow, units, initial, time unit and coefficient match; conflicts are rejected",
+    "queue_timestep": "Inferred timestep is limited to service_time/4; explicit timestep greater than service_time is rejected",
+    "stock_bounds": "Post-simulation bounds are enforced with error/warn behavior and no hidden clamp"
+  },
+  "short_infusion": {
+    "source_case": "blind8b_en_short_infusion-run-1",
+    "components_after_normalization": 1,
+    "unique_variable_ids": true,
+    "final_stock": 0.2571126103514574,
+    "time_step": 0.013333333333333334
+  },
+  "parcel_service": {
+    "source_case": "blind8b_ru_parcel_service-run-3",
+    "min_stock": 2.0549088704294344e-24,
+    "final_stock": 2.0549088704294344e-24,
+    "time_step": 0.0625
+  },
+  "verification": {
+    "targeted_tests": 79,
+    "full_generation_core_tests": 325,
+    "raw_report": "generation_core/out/hardening-regression.json"
+  },
+  "limitations": [
+    "This is targeted engineering regression, not a new controlled LLM benchmark",
+    "Controlled 8B/30B rates from the earlier frozen pipeline are not rewritten",
+    "A fresh unseen corpus is required before claiming a generative quality improvement"
+  ]
+}

@@ -9,6 +9,71 @@
 Коммиты с заметными изменениями — с версией в сообщении: `x.y.z - что сделано`.
 Для каждой записи указываем изменения, затронутые модули и выполненные проверки.
 
+## 0.6.2 — 2026-11-09
+
+- **Post-benchmark hardening**: исправлены double-count вложенных тегов archetype,
+  русская морфология Van der Pol, эквивалентный duplicate outflow
+  `conditional_inflow`/`first_order`, queue timestep и проверка stock bounds после
+  симуляции. Конфликт коэффициентов по-прежнему отклоняется; скрытого clamp нет.
+  Сохранённые short infusion и parcel plans прошли targeted regression без LLM/GPU:
+  один компонент/уникальные IDs и неотрицательная очередь с финалом около 2,05e-24.
+  Это не новый controlled benchmark и не основание пересчитывать прежние проценты.
+- **Archives и независимая оценка**: полный owner archive сохранён как
+  `out/archives/sdcloud-controlled-qwen3-0.6.2.tar.gz` (36,5 MB, 4787 members),
+  SHA-256 — `evaluation/controlled-local-qwen3-artifacts.sha256`. Публичный
+  `sdcloud-expert-review-0.6.2.tar.gz` содержит 432 задания и 251 model artifact
+  в анонимизированных группах A/B без answer keys; приватное соответствие находится
+  только в отдельном архиве владельца. Два человека-эксперта и adjudication остаются
+  `pending_human_annotation`.
+- **Production profile**: добавлены `docker-compose.production.yml` и `deploy/Caddyfile`
+  с pinned Caddy 2.10.2, автоматическим HTTPS, healthchecks, resource limits и log
+  rotation. Dev OTP запрещён, backend fail-fast требует SMTP host/from вне local/test.
+  `deploy/check-production.sh` проверяет секреты, CORS, Compose и Caddyfile без запуска;
+  `deploy/backup.sh` сохраняет обе PostgreSQL-базы и checksums, не удаляя старые копии.
+  Внешний deployment, реальный DNS/ACME и SMTP не выполнялись.
+- **Диплом**: добавлены post-benchmark hardening, llama.cpp citation, архивы и
+  анонимизированный пакет для экспертов. Обновлены методические ограничения и
+  команды воспроизведения; PDF содержит 65 страниц.
+
+- **Controlled локальная 30B**: на неизменных source `d7ee55d`, frozen corpus,
+  protocol и llama.cpp settings из серии 8B выполнен отдельный ablation только
+  Qwen3-30B-A3B-Q4_K_M: **216 cases**. Direct — 1,39% по всем метрикам;
+  typed_no_repair — 77,78% executable, 70,83% semantic и 69,44% behavior; full —
+  **98,61% executable, 90,28% semantic и 88,89% behavior** при repair rate 20,83%
+  и average 16,532 с. Все point-estimate targets 90/85/85 пройдены; graph — 98,61%.
+  Protocol deviations и infrastructure errors отсутствуют.
+- **Эффект repair**: full против typed_no_repair дал +20,83 п.п. executable,
+  +19,44 п.п. semantic и +19,44 п.п. behavior без ухудшившихся пар.
+  Для behavior 95% cluster CI — [8,33; 31,94] п.п., Holm p=0,000122.
+- **Paired 8B/30B comparison**: в full разница 30B − 8B составила +4,17 п.п.
+  executable, +2,78 п.п. semantic и +4,17 п.п. behavior. Для behavior CI —
+  [−1,39; 11,11] п.п., exact McNemar p=0,453125, Holm p=1,0; остальные
+  full-метрики также имеют Holm p=1,0. Прохождение targets не интерпретируется
+  как доказанное превосходство 30B. Dense 8B и MoE 30B-A3B — разные архитектуры,
+  поэтому чистый scaling effect не идентифицирован. Среднее full latency ниже у 30B
+  (16,532 против 30,988 с), но статистический latency test не проводился.
+- **Artifacts и failure analysis**: проверены все 216 case/prompt artifacts и
+  128 model/simulation комплектов; SHA-256 local/remote raw report совпали.
+  Остались восемь behavior failures: managed forest (3), relaxation cycle (3),
+  отрицательный parcel buffer (1) и duplicate component identifier в short infusion (1).
+  Сформированы 216 blind annotation tasks; два независимых эксперта, Cohen's kappa
+  и adjudication остаются `pending_human_annotation`. Будущие исправления потребуют
+  нового unseen corpus, а не подстройки под раскрытые случаи.
+- **GPU cleanup**: пик мониторинга — 19 216 MiB VRAM, 75 °C и 170,87 Вт.
+  После единственной 30B-серии inference-сервер и monitor автоматически остановлены,
+  evaluation-контейнеры удалены. Активных CUDA-процессов нет; наблюдалось
+  487 MiB used / 23 651 MiB free. Дополнительные GPU-запуски не выполняются.
+- **Документация**: манифест — `evaluation/controlled-local-qwen3-30b.json`,
+  статистика — `evaluation/controlled-local-qwen3-30b-paired-analysis.json` и
+  `evaluation/controlled-local-qwen3-model-comparison.json`. Обновлены README, PRD
+  и экспериментальные разделы диплома; ограничения сравнения сохранены явно.
+- **Проверки**: **325 core, 22 backend и 12 frontend tests**; Ruff, Biome,
+  TypeScript, `uv lock --check` и production frontend build зелёные. Production
+  preflight принимает безопасную тестовую конфигурацию и отклоняет неполную;
+  изолированный smoke подтвердил `version=0.6.2`, `/ready`, frontend 200,
+  OpenAPI 404 и два валидных PostgreSQL backup. PDF — 65 страниц, 23 источника,
+  неопределённых или неиспользуемых ссылок нет.
+
 ## 0.6.1 — 2026-11-08
 
 - **Controlled локальная 8B**: на источнике `d7ee55d` выполнен frozen blind ablation

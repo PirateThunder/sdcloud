@@ -1,6 +1,6 @@
 # PRD: sdCloud Generation Core 2.0
 
-**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0, structural/Vensim/RAG hardening 0.5.0 и controlled evaluation/dynamic routing 0.6.0 и evaluation hardening 0.6.1 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
+**Статус:** этапы 0–4, hardening 0.2.2, typed component generation 0.3.0, explicit ODE/composition hardening 0.4.0, structural/Vensim/RAG hardening 0.5.0, controlled evaluation/dynamic routing 0.6.0, evaluation hardening 0.6.1 и controlled 30B/component hardening 0.6.2 реализованы. Quality targets 0.2.2 относятся к original/held-out archetypes и не доказывают generalization на произвольных предметных областях
 **Владелец компонента:** `generation_core`  
 **Связанный документ:** `../PRD.md`  
 **Порядок:** scientific hardening → SD language + import/export → backend → advanced analysis  
@@ -820,7 +820,7 @@ uv run ruff check .
 - SDXorg (`out/sdx-vensim-v14-timestamp.json`): 154 модели, 148 с эталоном, 35 imported, 35 simulated, 34 matched. До изменений было 16/16/15. Rössler сохраняет 52 failed points возле нуля; adaptive RK4/DOP853 расходится сильнее и не используется для маскировки численной несовместимости.
 - Полный offline suite: 231 core, 20 backend и 12 frontend tests; Ruff, Biome, TypeScript, lock-проверки и production frontend build зелёные. GPU использовался только для локальной 30B acceptance; импорт и SDXorg не требуют GPU.
 
-## 29. Extended Vensim interoperability и robustness (Unreleased)
+## 29. Extended Vensim interoperability и robustness (0.6.0)
 
 - `:EXCEPT:` поддерживает wildcard и несколько исключений. Alternative subscript lists объединяются по фактическим элементам, включая subset/superset, complementary subranges и aliases. Непокрытые или неоднозначные assignments отклоняются. Частичные диапазоны представляются явными IR dimensions без заполнения отсутствующих элементов фиктивными нулями.
 - Numeric multidimensional/partial arrays, element-specific stock derivatives и mixed fixed/wildcard indices раскрываются в scalar per-element equations; агрегаты `SUM/PROD/VMIN/VMAX` сохраняют wildcard semantics. Multiword numeric indices и equivalent dimensions обрабатываются; две одинаковые оси одной переменной не склеиваются.
@@ -832,7 +832,7 @@ uv run ruff check .
 - Полный offline suite после importer/macros и robustness fixes — 251 core test; Ruff и lockfile зелёные. Generic `time unit(s)` нормализуется в `time` без угадывания физических `minute/year`; строковые units компонентов и параметров нормализуются через strict units parser без принятия malformed типов.
 - 8B Q4_K_M evaluation на RTX 5090 завершён: acceptance2 — 70,83% по всем метрикам, acceptance3 — 79,17%, acceptance4 — 61,11%; composition — 100% executable/semantic и 75% behavior (backlog stock ушёл ниже нуля). Всего 51/70 executable и semantic, 50/70 behavior; repair rate 82,86%, average 64,683 с, pipeline `62695337cf3f49127909d0cb567fa98e95d37faf98c9df854ec169f851d37f91`. Targets 90/85/85 не достигнуты, стабильная замена 30B не подтверждена. Мониторинг зафиксировал пик 80 °C и 176,91 Вт, после остановки vLLM — 225 MiB. 14B и новые live robustness/long-context отложены по решению владельца; fine-tuning не запускается.
 
-## 30. Controlled ablation и independent evaluation framework (Unreleased)
+## 30. Controlled ablation и independent evaluation framework (0.6.0)
 
 - Добавлены три режима `benchmark.py`: `direct`, `typed_no_repair`, `full`, а также `--mode ablation` для их последовательного запуска на одном LLM и одинаковых `prompt_id/run`. Direct получает полную модель одним JSON-ответом без ModelBrief, ComponentPlan, pattern library, RAG и repair. Typed_no_repair и full используют прежний production pipeline с нулевым и ограниченным repair-бюджетом соответственно.
 - Все варианты разделяют bounded AST, canonical normalization, units/topology validation, smoke simulation и exports. Это осознанный общий evaluation contract, а не выполнение произвольного LLM-кода. Direct не обязан воспроизвести внутренний `pattern_id`; эталонный pattern задаёт только semantic oracle после генерации. Артефакты рук разделены, существующий production API генерации не изменён.
@@ -854,7 +854,7 @@ uv run ruff check .
 - `benchmark_8b_stress_prompts.json` содержит 28 development cases. Отдельный `benchmark_confirmatory_8b_v2_prompts.json` содержит 24 cases и заморожен SHA-256 `36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18`. Для него выполнен реальный ablation direct/typed_no_repair/full на Ministral с artifacts, blind expert export и protocol defaults. GPU и 14B не используются. Отчёт — `out/openrouter-ministral8b-ablation-v2.json`, annotations — `out/openrouter-ministral8b-annotations-v2/`.
 - Frozen regression на pipeline `a5fc3038a94ea8860b80363e3f3e4d190b4bec339312d74d01f5af5d0a7bb8ff`: acceptance2 — 100% по всем метрикам, acceptance3 — 79,17%, acceptance4 — 100%; сводно 61/66 = **92,42% executable/semantic/behavior**. Stress 28 и original 26 — **100% по всем метрикам**. Acceptance3 остаётся отдельным слабым местом, но цели по сводному corpus выполнены. Реальный blind ablation начат после этих проверок; его результаты не используются для подстройки.
 
-## 31. Dynamic local 8B/30B routing (Unreleased)
+## 31. Dynamic local 8B/30B routing (0.6.0)
 
 - `LLM_DYNAMIC_ROUTING=1` включает opt-in `DynamicLLM` только для local/vLLM provider. Перед
   каждой полной генерацией `NvidiaSMIMonitor` получает total/used/free MiB для выбранного GPU;
@@ -918,3 +918,62 @@ uv run ruff check .
   Полный offline suite — **319 core, 20 backend и 12 frontend tests**; Ruff, Biome,
   TypeScript, lockfiles и production frontend build проходят. Подробности и hashes —
   `evaluation/controlled-local-qwen3.json`.
+
+## 33. Controlled local 30B и сравнение checkpoint (0.6.2)
+
+- Выполнен follow-up только для Qwen3-30B-A3B-Q4_K_M на неизменном source `d7ee55d`,
+  pipeline `cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e`,
+  corpus/protocol и llama.cpp settings из раздела 32. Все 216 случаев завершены без
+  infrastructure errors и protocol deviations; 8B endpoint в этой серии не запускался.
+  Direct — 1,39% по всем метрикам; typed_no_repair — 77,78% executable, 70,83%
+  semantic и 69,44% behavior; full — **98,61% executable, 90,28% semantic и
+  88,89% behavior**, repair rate 20,83%, average 16,532 с. Targets 90/85/85 пройдены;
+  graph=98,61% не достигает отдельного reference target 100%.
+- Full против typed_no_repair: +20,83 п.п. executable и +19,44 п.п. semantic/behavior,
+  15/14/14 улучшённых и ни одной ухудшившейся пары. Для behavior 95% cluster CI —
+  [8,33; 31,94] п.п., Holm p=0,000122. Результат подтверждает эффект bounded repair,
+  но не обобщает его на другие модели и предметные области.
+- Парное 30B − 8B в full: +4,17 п.п. executable, +2,78 п.п. semantic и +4,17 п.п.
+  behavior. Для последнего 5 пар улучшились, 2 ухудшились, CI [−1,39; 11,11] п.п.,
+  exact McNemar p=0,453125, Holm p=1,0. Все full-метрики после correction имеют
+  p=1,0, поэтому превосходство 30B не заявляется. Это dense 8B против MoE 30B-A3B,
+  а не изолированный эксперимент по числу параметров. Среднее время full ниже у 30B
+  (16,532 против 30,988 с), но latency significance test не проводился.
+- Проверены все 216 case/prompt artifacts и 128 model/simulation комплектов;
+  local/remote raw SHA-256 совпадает. Failure groups: три managed forest с
+  `logistic_growth` вместо `renewable_resource`, три relaxation cycle без требуемого
+  archetype/behavior, parcel с финальным buffer −2 и short infusion с конфликтом
+  `Clearance_flow_coefficient`/`Clearance_flow`. Никакой подстройки под corpus нет;
+  следующие исправления требуют regression и нового unseen corpus.
+- Сформированы 216 blind annotation tasks; два независимых эксперта и adjudication
+  не выполнялись. Манифест — `evaluation/controlled-local-qwen3-30b.json`,
+  полная статистика — `evaluation/controlled-local-qwen3-30b-paired-analysis.json` и
+  `evaluation/controlled-local-qwen3-model-comparison.json`. Пик — 19 216 MiB VRAM,
+  75 °C, 170,87 Вт. После завершения server/monitor остановлены, evaluation-контейнеры
+  удалены, активных CUDA-процессов нет; GPU далее в этой серии не используется.
+  Offline suite — 319 core, 20 backend и 12 frontend tests, lint/lock/build зелёные.
+
+## 34. Deterministic component hardening и expert archive (0.6.2)
+
+- Archetype scoring больше не удваивает вес вложенных тегов (`carrying capacity`
+  и `capacity`), русское основание `ван дер пол` поддерживает склонения. Это общие
+  правила, а не benchmark-specific идентификаторы. На сохранённых описаниях forest
+  выбирается `renewable_resource`, Van der Pol — `van_der_pol_oscillator`.
+- `normalize_component_payload` удаляет `first_order`, который повторяет outflow
+  `conditional_inflow`, только при совпадении механизма и коэффициента; взаимно
+  обратные coefficient/time constant поддержаны. Оставшиеся конфликты получают
+  явную `duplicate conditional outflow` ошибку вместо позднего duplicate ID.
+- Для queue неявный timestep ограничен `service_time/4`, а `build_components`
+  отклоняет явный timestep больше `service_time`. `_validate_output` проверяет
+  bounds всех stocks, включая subscripted series: error отклоняет нарушение, warn
+  добавляет warning, значения не подменяются clamp. Сохранённый short infusion
+  план нормализуется к одному компоненту, parcel имеет timestep 0,0625 и
+  неотрицательный финал около 2,05e-24. Это не новый benchmark.
+- Полный controlled archive и отдельный публичный expert archive имеют SHA-256 в
+  `evaluation/`. Объединённый expert package содержит 432 задания и 251 artifact
+  в анонимизированных A/B группах без answer keys. Два человека-эксперта остаются
+  необходимыми; автоматическая разметка не считается независимой.
+- Production profile находится в корне и не меняет generation CLI/API contracts.
+  Полный offline suite содержит дополнительные regressions на component dedup,
+  конфликт коэффициентов, queue timestep, bounds и archetype selection. GPU не
+  использовался; будущие проценты определяются только новым frozen corpus.

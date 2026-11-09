@@ -89,3 +89,40 @@ async def test_logout_revokes_server_session_and_origin_is_checked(client):
     assert logged_out.status_code == 204
     refreshed = await client.post("/api/v1/auth/refresh")
     assert refreshed.status_code == 401
+
+
+def test_production_requires_smtp_configuration():
+    import pytest
+
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="BACK_SMTP_HOST"):
+        Settings(
+            env="production",
+            jwt_secret="secret",
+            otp_secret="other-secret",
+            email_dev_code=False,
+        )
+    with pytest.raises(ValueError, match="BACK_SMTP_FROM or BACK_SMTP_USER"):
+        Settings(
+            env="production",
+            jwt_secret="secret",
+            otp_secret="other-secret",
+            email_dev_code=False,
+            smtp_host="smtp.example",
+        )
+
+
+def test_production_accepts_secure_otp_configuration():
+    from app.config import Settings
+
+    settings = Settings(
+        env="production",
+        jwt_secret="secret",
+        otp_secret="other-secret",
+        email_dev_code=False,
+        smtp_host="smtp.example",
+        smtp_from="sdcloud@example.com",
+    )
+    assert settings.smtp_host == "smtp.example"
+    assert not settings.email_dev_code

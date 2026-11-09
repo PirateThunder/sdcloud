@@ -1,0 +1,105 @@
+x-production-logging: &production-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  gen-api:
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_FIXTURE_PATH: ""
+      SERV_API_KEY: ${SERV_API_KEY:?set SERV_API_KEY}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:58312/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    <<: *production-logging
+
+  gen-worker:
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LLM_FIXTURE_PATH: ""
+
+  back-api:
+    environment:
+      BACK_ENV: production
+      BACK_JWT_SECRET: ${BACK_JWT_SECRET:?set BACK_JWT_SECRET}
+      BACK_OTP_SECRET: ${BACK_OTP_SECRET:?set BACK_OTP_SECRET}
+      BACK_EMAIL_DEV_CODE: "0"
+      BACK_CORS_ORIGINS: ${BACK_CORS_ORIGINS:?set BACK_CORS_ORIGINS}
+      BACK_TRUST_PROXY_HEADERS: "1"
+      BACK_SMTP_HOST: ${BACK_SMTP_HOST:?set BACK_SMTP_HOST}
+      BACK_SMTP_PORT: ${BACK_SMTP_PORT:-465}
+      BACK_SMTP_USER: ${BACK_SMTP_USER:-}
+      BACK_SMTP_PASSWORD: ${BACK_SMTP_PASSWORD:-}
+      BACK_SMTP_FROM: ${BACK_SMTP_FROM:-}
+      BACK_SMTP_TIMEOUT_SECONDS: ${BACK_SMTP_TIMEOUT_SECONDS:-15}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:61230/ready', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    <<: *production-logging
+
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+    environment:
+      NEXT_PUBLIC_LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:54733/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    <<: *production-logging
+
+  proxy:
+    image: ${CADDY_IMAGE:-caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d}
+    environment:
+      SDCLOUD_DOMAIN: ${SDCLOUD_DOMAIN:?set SDCLOUD_DOMAIN}
+      SDCLOUD_TLS_EMAIL: ${SDCLOUD_TLS_EMAIL:?set SDCLOUD_TLS_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "${HTTP_BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTPS_BIND_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    depends_on:
+      gen-api:
+        condition: service_healthy
+      back-api:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    <<: *production-logging
+
+volumes:
+  caddy_data:
+  caddy_config:

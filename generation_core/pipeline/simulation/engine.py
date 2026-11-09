@@ -164,7 +164,7 @@ def _validate_series_grid(parameters: SimulationParameters, grid: TimeGrid) -> N
             )
 
 
-def _validate_output(document: ModelDocument, output: EngineOutput, grid: TimeGrid) -> None:
+def _validate_output(document: ModelDocument, output: EngineOutput, grid: TimeGrid) -> list[str]:
     if len(output.time) != len(grid.output_times):
         raise SimulationError("simulation returned a different output time grid")
     for actual, expected in zip(output.time, grid.output_times, strict=True):
@@ -178,6 +178,36 @@ def _validate_output(document: ModelDocument, output: EngineOutput, grid: TimeGr
             raise SimulationError(f"series {name} has a different length")
         if any(not math.isfinite(value) for value in values):
             raise SimulationError(f"series {name} contains non-finite values")
+    warnings = []
+    for stock in (item for item in document.variables if item.kind == "stock" and item.bounds):
+        bounds = stock.bounds
+        values = [
+            value
+            for name, series in output.variables.items()
+            if name == stock.id or name.startswith(f"{stock.id}[")
+            for value in series
+        ]
+        violations = []
+        if bounds.min is not None:
+            tolerance = max(1e-9, abs(bounds.min) * 1e-9)
+            violations.extend(
+                f"{value} < min {bounds.min}" for value in values if value < bounds.min - tolerance
+            )
+        if bounds.max is not None:
+            tolerance = max(1e-9, abs(bounds.max) * 1e-9)
+            violations.extend(
+                f"{value} > max {bounds.max}" for value in values if value > bounds.max + tolerance
+            )
+        if not violations:
+            continue
+        message = (
+            f"STOCK_BOUNDS_VIOLATION at variables.{stock.id}: {violations[0]}; "
+            "use a smaller time_step or correct the flow policy"
+        )
+        if bounds.on_violation == "error":
+            raise SimulationError(message)
+        warnings.append(message)
+    return warnings
 
 
 def simulate_model(document: ModelDocument, parameters: SimulationParameters) -> SimulationResult:
@@ -254,7 +284,7 @@ def simulate_model(document: ModelDocument, parameters: SimulationParameters) ->
             raise SimulationError(
                 f"PySD failed: {type(exc).__name__}: {exc}; SciPy failed: {type(scipy_error).__name__}: {scipy_error}"
             ) from scipy_error
-    _validate_output(document, output, grid)
+    bound_warnings = _validate_output(document, output, grid)
     return SimulationResult(
         model_id=document.id,
         model_hash=document.model_hash(),
@@ -271,6 +301,7 @@ def simulate_model(document: ModelDocument, parameters: SimulationParameters) ->
         fallback_reason=fallback_reason,
         warnings=[
             item.message for item in document.validation.issues if item.severity == "warning"
-        ],
+        ]
+        + bound_warnings,
         metadata={"points": len(output.time), **output.metadata},
     )

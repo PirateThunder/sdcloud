@@ -75,12 +75,15 @@ time constant. saveper должен быть целым кратным time_step
 - conditional_inflow: внешний rate поступает в stock с start_time до end_time; outflow —
   stock*elimination_rate. Подходит для infusion с последующей элиминацией. Укажи stock,
   inflow, outflow, rate, start_time, end_time, elimination_rate, initial, units, time_unit.
-  Этот component уже задаёт обе скорости: не добавляй polynomial_ode для того же stock.
+  Этот component уже задаёт обе скорости: не добавляй polynomial_ode или first_order outflow
+  для того же stock.
 - queue: arrivals добавляет arrival_rate, service=min(max(stock,0)/service_time,max_service).
   Для конечного входного потока задай arrival_start_time и arrival_end_time, иначе последний=null.
   Укажи stock, arrivals, service, service_time, max_service, arrival_rate, initial, units,
-  time_unit. Не добавляй отдельный first_order outflow, scheduled_flow или другую queue для
-  того же процесса. Не создавай дополнительный serviced stock без явного требования пользователя.
+  time_unit. time_step не должен превышать service_time, иначе Euler может снять больше items,
+  чем находится в очереди. Не добавляй отдельный first_order outflow, scheduled_flow или другую
+  queue для того же процесса. Не создавай дополнительный serviced stock без явного требования
+  пользователя.
   Для одной очереди не добавляй polynomial_ode со вторым representation того же backlog или
   отдельным удалением его items. Тернарный `condition ? a : b` не поддерживается: используй
   if_then_else или typed component.

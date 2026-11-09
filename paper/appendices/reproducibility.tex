@@ -99,18 +99,21 @@ Fixture проверяет только evaluation framework, а не качес
 
 Отчёты содержат hashes, настройки и case results. Для публикации сохраняются версия vLLM plugin, inference lockfiles, prompts и аннотационная инструкция. Секреты в отчёты и репозиторий не включаются.
 
-\section{Controlled локальная 8B}
+\section{Controlled локальные 8B и 30B-A3B}
 
 Для совпадения pipeline hash используется исходник:
 \begin{center}
 \scriptsize\ttfamily d7ee55d505d0f3bb360ae5adc4156e956ff6cee9
 \end{center}
-Последующие изменения offline-анализа не подменялись на удалённой машине во время прогона. Checkpoint --- \codeid{Qwen/Qwen3-8B-GGUF}; его revision:
+Последующие изменения offline-анализа не подменялись на удалённой машине во время прогонов. Сначала отдельно проверена 8B, затем при неизменном source выполнена follow-up серия только 30B-A3B. Checkpoints и revisions:
 \begin{center}
-\scriptsize\ttfamily 7c41481f57cb95916b40956ab2f0b139b296d974
+\scriptsize\ttfamily Qwen/Qwen3-8B-GGUF: 7c41481f57cb95916b40956ab2f0b139b296d974
 \end{center}
-Запуск llama.cpp на GPU-хосте:
+\begin{center}
+\scriptsize\ttfamily Qwen/Qwen3-30B-A3B-GGUF: e4d4bafdfb96a411a163846265362aceb0b9c63a
+\end{center}
 
+Запуск llama.cpp для 8B:
 \begin{lstlisting}[language=bash,breakatwhitespace=false]
 docker run --rm --gpus all -p 127.0.0.1:8000:8000 \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
@@ -120,11 +123,16 @@ docker run --rm --gpus all -p 127.0.0.1:8000:8000 \
   --host 0.0.0.0 --port 8000
 \end{lstlisting}
 
-После готовности \codeid{/health} и сохранения \codeid{/props} выполняется benchmark без RAG и unstructured fallback:
+Для 30B-A3B команда та же, за исключением пути и alias:
+\begin{lstlisting}[language=bash,breakatwhitespace=false]
+  --model /root/.cache/huggingface/hub/models--Qwen--Qwen3-30B-A3B-GGUF/snapshots/e4d4bafdfb96a411a163846265362aceb0b9c63a/Qwen3-30B-A3B-Q4_K_M.gguf \
+  --alias large --ctx-size 8192 --n-gpu-layers 99
+\end{lstlisting}
 
+После готовности \codeid{/health} и сохранения \codeid{/props} выполняется benchmark без RAG и unstructured fallback. Для 8B задаётся \codeid{LOCAL_LLM_MODEL=small}, для 30B-A3B --- \codeid{large}; остальные настройки общие:
 \begin{lstlisting}[language=bash]
 export LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1
-export LOCAL_LLM_MODEL=small
+export LOCAL_LLM_MODEL=large
 export LOCAL_LLM_STRUCTURED_OUTPUT=1
 export LOCAL_LLM_ALLOW_UNSTRUCTURED_FALLBACK=0
 export LOCAL_LLM_MAX_TOKENS=4096
@@ -139,23 +147,42 @@ uv run python benchmark.py --provider local --mode ablation \
   --prompts-file pipeline/benchmark_confirmatory_8b_v2_prompts.json \
   --runs 3 --concurrency 1 --max-repairs 2 --corpus-role blind \
   --bootstrap-samples 10000 --seed 2026 \
-  --output out/local-qwen3-8b-q4km-ablation.json \
-  --artifacts-dir out/local-qwen3-8b-q4km-artifacts \
-  --annotations out/local-qwen3-8b-q4km-annotations
+  --output out/local-qwen3-30b-a3b-q4km-ablation.json \
+  --artifacts-dir out/local-qwen3-30b-a3b-q4km-artifacts \
+  --annotations out/local-qwen3-30b-a3b-q4km-annotations
 
 uv run python evaluate.py compare \
-  --report out/local-qwen3-8b-q4km-ablation.json \
+  --report out/local-qwen3-30b-a3b-q4km-ablation.json \
   --bootstrap-samples 10000 --seed 2026 \
-  --output out/local-qwen3-8b-q4km-paired-analysis.json
+  --output out/local-qwen3-30b-a3b-q4km-paired-analysis.json
 \end{lstlisting}
 
-Фактический манифест: \codeid{evaluation/controlled-local-qwen3.json}.
+Для 8B аналогично использованы \codeid{small} и префикс \codeid{local-qwen3-8b-q4km}. Парное сравнение моделей выполняется локально без GPU:
+\begin{lstlisting}[language=bash]
+uv run python evaluate.py compare-models \
+  --baseline out/local-qwen3-8b-q4km-ablation.json \
+  --treatment out/local-qwen3-30b-a3b-q4km-ablation.json \
+  --bootstrap-samples 10000 --seed 2026 \
+  --output out/local-qwen3-model-comparison.json
+\end{lstlisting}
 
-Полная парная статистика: \codeid{evaluation/controlled-local-qwen3-paired-analysis.json}.
+Фактические манифесты и полная статистика:
+\begin{itemize}
+    \item \codeid{evaluation/controlled-local-qwen3.json};
+    \item \codeid{evaluation/controlled-local-qwen3-30b.json};
+    \item \codeid{evaluation/controlled-local-qwen3-}\newline
+      \codeid{paired-analysis.json};
+    \item \codeid{evaluation/controlled-local-qwen3-}\newline
+      \codeid{30b-paired-analysis.json};
+    \item \codeid{evaluation/controlled-local-}\newline
+      \codeid{qwen3-model-comparison.json}.
+\end{itemize}
 
-Raw artifacts и пакеты аннотации сохраняются локально в \codeid{generation_core/out/} и не коммитятся. Для будущего сравнения с 30B команда \codeid{evaluate.py} \codeid{compare-models} требует совпадения corpus, pipeline, protocol, LLM settings и prompt/run/seed пар; фактический 30B-запуск в этой серии не выполнялся.
+Raw artifacts и пакеты аннотации сохраняются локально в \codeid{generation_core/out/} и не коммитятся. Полный архив владельца --- \codeid{out/archives/sdcloud-controlled-qwen3-0.6.2.tar.gz}; его SHA-256 находится в \codeid{evaluation/controlled-local-qwen3-artifacts.sha256}. Он содержит приватные answer keys и не передаётся экспертам.
 
-После завершения evaluation inference-сервер и GPU-monitor останавливаются. Основной продуктовый стек при этом не используется и не останавливается.
+Для двух независимых экспертов подготовлен отдельный \codeid{out/archives/sdcloud-expert-review-0.6.2.tar.gz}: 432 задания и 251 model artifact в анонимизированных группах A/B, без answer keys и соответствия групп checkpoints. Приватное соответствие сохранено только в \codeid{out/archives/sdcloud-expert-review-private-0.6.2.tar.gz}. Контрольные суммы обоих архивов находятся в \codeid{evaluation/expert-review-packages.sha256}. После получения двух CSV выполняется \codeid{evaluate.py agreement} отдельно по группам A/B, а затем adjudication.
+
+\codeid{compare-models} отклоняет несовпадение corpus, pipeline, protocol, LLM settings и prompt/run/seed пар. После каждой серии evaluation inference-сервер и GPU-monitor останавливаются; после 30B-A3B временные контейнеры удалены. Основной продуктовый стек при этом не используется и не останавливается.
 
 \section{Полный REST product E2E}
 

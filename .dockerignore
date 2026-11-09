@@ -26,4 +26,5 @@
 **/test-results
 **/e2e/screenshots
 **/*.log
+**/backups
 .DS_Store

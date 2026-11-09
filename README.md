@@ -6,8 +6,8 @@ AI-ассистент для системной динамики: превращ
 calibration и экспорт в открытые форматы.
 
 Монорепозиторий состоит из независимого движка генерации, продуктового backend и
-браузерного интерфейса. Текущая версия — **0.6.1**, статус — локальная разработка,
-не production release.
+браузерного интерфейса. Текущая версия — **0.6.2**, статус — production profile
+подготовлен, но внешний deployment с реальными доменом и SMTP не выполнялся.
 
 ## Возможности
 
@@ -41,8 +41,19 @@ calibration и экспорт в открытые форматы.
 - [CHANGELOG.md](CHANGELOG.md) — история заметных изменений.
 - [.env.example](.env.example) — шаблон конфигурации без реальных секретов.
 - [evaluation/controlled-local-qwen3.json](evaluation/controlled-local-qwen3.json) —
-  манифест завершённого controlled ablation локальной 8B, 216 случаев и парная
-  статистика; сопоставимый 30B-запуск отложен, экспертная разметка ещё не проведена.
+  манифест controlled ablation локальной 8B: 216 случаев и парная статистика.
+- [evaluation/controlled-local-qwen3-30b.json](evaluation/controlled-local-qwen3-30b.json) —
+  аналогичная серия Qwen3-30B-A3B-Q4_K_M на том же pipeline и corpus.
+- [evaluation/controlled-local-qwen3-model-comparison.json](evaluation/controlled-local-qwen3-model-comparison.json) —
+  парное сравнение 8B/30B; различия full pipeline статистически не значимы.
+  Независимая экспертная разметка ещё не проведена.
+- [evaluation/release-0.6.2.json](evaluation/release-0.6.2.json) — релизный манифест:
+  archives, hardening, expert handoff, production smoke и внешние блокеры.
+- [evaluation/post-benchmark-hardening.json](evaluation/post-benchmark-hardening.json) —
+  targeted regression без LLM/GPU, не новый benchmark.
+- [evaluation/controlled-local-qwen3-artifacts.sha256](evaluation/controlled-local-qwen3-artifacts.sha256)
+  и [evaluation/expert-review-packages.sha256](evaluation/expert-review-packages.sha256) —
+  контрольные суммы архивов владельца и публичного экспертного пакета.
 - [paper/main.tex](paper/main.tex) — исходники магистерской работы в LaTeX;
   собранные PDF и локальные инструменты не коммитятся.
 
@@ -203,9 +214,48 @@ production-сервер frontend. Backend и generation_core при этом д�
   локальный dev-режим OTP.
 - `work/`, `work_api/`, `out/`, результаты тестов и локальные симуляции не коммитятся.
 
-Production-override, HTTPS, публичное развёртывание и release-процедура пока не
-реализованы. Перед production-запуском необходимо заменить dev-секреты, настроить
-SMTP, ограничить доступ к внутренним сервисам и выполнить полную приёмку.
+## Production profile
+
+Отдельный `docker-compose.production.yml` добавляет Caddy с автоматическим HTTPS,
+healthchecks, resource limits и log rotation. Внутренние API остаются на loopback;
+наружу выставляются только HTTP/HTTPS proxy. Dev OTP отключён, backend требует
+непустые JWT/OTP secrets, SMTP host и sender.
+
+1. В `.env` задайте `GEN_DB_PASSWORD`, `BACK_DB_PASSWORD`, `SERV_API_KEY`,
+   `BACK_JWT_SECRET`, `BACK_OTP_SECRET`, `BACK_ENV=production`,
+   `BACK_EMAIL_DEV_CODE=0`, `SDCLOUD_DOMAIN`, `SDCLOUD_TLS_EMAIL`,
+   `BACK_CORS_ORIGINS=https://<домен>` и `BACK_SMTP_*`.
+2. Для OpenRouter задайте `LLM_PROVIDER=openrouter` и `OPENROUTER_API_KEY`.
+   Для local provider вместо этого настройте `LOCAL_LLM_BASE_URL` и
+   `LOCAL_LLM_MODEL`; preflight проверит выбранный вариант.
+3. Настройте DNS домена на сервер и откройте порты 80/443. Не помещайте реальные
+   секреты в `.env.example`, Git или журнал.
+4. Выполните проверку без запуска сервисов и без ACME-запросов:
+
+```bash
+deploy/check-production.sh
+docker compose -f docker-compose.yml -f docker-compose.production.yml up --build -d
+```
+
+Caddy получает и обновляет TLS-сертификаты автоматически после корректной настройки
+DNS. Его образ закреплён версией и multi-architecture digest; при необходимости
+`CADDY_IMAGE` можно переопределить. `HTTP_BIND_ADDRESS`, `HTTPS_BIND_ADDRESS`,
+`HTTP_PORT` и `HTTPS_PORT` настраиваются через `.env`.
+
+Резервное копирование обеих PostgreSQL-баз:
+
+```bash
+deploy/backup.sh
+# Или другой каталог: deploy/backup.sh /path/to/backups
+```
+
+Скрипт создаёт timestamped custom-format dumps и SHA-256 в `backups/` (gitignored),
+не удаляя старые копии. Секреты в dumps не включаются отдельным файлом; храните
+резервную конфигурацию `.env` независимо и защищённо. Восстановление проверяйте на
+отдельном окружении перед production-заменой.
+
+Реальный внешний deployment, DNS/ACME и SMTP-доставка в этом репозитории не
+выполнялись. Проверены preflight и изолированный локальный production-config smoke.
 
 ## Текущие ограничения
 
@@ -243,6 +293,12 @@ SMTP, ограничить доступ к внутренним сервисам
 - Qwen3-8B-Q4_K_M проверен на 70 cases: 72,86% executable/semantic и 71,43% behavior.
   Целевые показатели не достигнуты, поэтому стабильная замена 30B не подтверждена.
   14B и дополнительные live robustness/long-context отложены; vLLM после 8B остановлен.
+- В сопоставимом controlled ablation на одном pipeline full 30B-A3B-Q4_K_M достиг
+  **98,61% executable, 90,28% semantic и 88,89% behavior** (216 случаев), а full 8B —
+  94,44%/87,50%/84,72%. Парная разница 30B − 8B не статистически значима: для behavior
+  +4,17 п.п., CI [−1,39; 11,11], Holm p=1,0. Это сравнение dense 8B и MoE 30B-A3B,
+  а не изолированный эффект размера. Независимая экспертная разметка ещё не проведена.
+  После 30B evaluation-сервер и monitor остановлены, временные контейнеры удалены.
 - Редактор CLD/SFD и автоматическая симуляция после каждой генерации не входят
   в текущую версию.
 

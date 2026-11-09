@@ -888,7 +888,7 @@ _METADATA = {
     ),
     "van_der_pol_oscillator": (
         "Van der Pol nonlinear relaxation oscillator",
-        ("van der pol", "ван дер поль", "relaxation oscillator", "предельный цикл"),
+        ("van der pol", "ван дер пол", "relaxation oscillator", "предельный цикл"),
     ),
     "duffing_oscillator": (
         "Duffing driven nonlinear oscillator",
@@ -911,11 +911,14 @@ def select_pattern(description: str) -> Pattern | None:
     text = description.casefold()
     candidates = []
     for pattern_id, (_, tags) in _METADATA.items():
-        score = sum(
-            len(tag)
-            for tag in tags
-            if re.search(rf"(?<![\w]){re.escape(tag)}", text)
-        )
+        matched = []
+        for tag in sorted(tags, key=len, reverse=True):
+            if not re.search(rf"(?<![\w]){re.escape(tag)}", text):
+                continue
+            if any(tag in longer for longer in matched):
+                continue
+            matched.append(tag)
+        score = sum(len(tag) for tag in matched)
         if score:
             candidates.append((score, pattern_id))
     explicit_stocks = set(explicit_ode_expressions(description))

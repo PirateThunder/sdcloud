@@ -1,0 +1,206 @@
+{
+  "schema_version": "1.0",
+  "kind": "controlled_local_model_evaluation",
+  "status": "completed",
+  "scope": "single_model_30b_follow_up_with_paired_8b_comparison",
+  "source_commit": "d7ee55d505d0f3bb360ae5adc4156e956ff6cee9",
+  "pipeline_sha256": "cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e",
+  "created_at": "2026-11-08T05:55:23.101679+00:00",
+  "corpus": {
+    "path": "generation_core/pipeline/benchmark_confirmatory_8b_v2_prompts.json",
+    "sha256": "36f21c904440acd7dc0e25911d41e5a78c9a81a3734a9d0b517b7b2e4391be18",
+    "role": "blind",
+    "prompts": 24,
+    "runs_per_prompt": 3,
+    "note": "The corpus, source and protocol were frozen before the controlled runs. The generator was not tuned from the 8B results before this 30B run. Future method changes require a fresh unseen corpus."
+  },
+  "protocol": {
+    "path": "generation_core/pipeline/evaluation_protocol.json",
+    "sha256": "8a479929a7aa026261d795ad350d241ffe00039a12d672dd5661f1944dc0ebbc",
+    "arms": ["direct", "typed_no_repair", "full"],
+    "cases_per_model": 216,
+    "completed_cases": 216,
+    "max_repairs": 2,
+    "bootstrap_samples": 10000,
+    "statistical_seed": 2026,
+    "inference_seeds": [2026, 2027, 2028],
+    "pair_key": ["prompt_id", "run", "inference_seed"],
+    "protocol_deviations": []
+  },
+  "runtime": {
+    "engine": "llama.cpp server-cuda",
+    "image_digest": "ghcr.io/ggml-org/llama.cpp@sha256:5bb779a449a18d8f4333e9814e887746342fe555c528f5eabc92b2093e32673a",
+    "build_info": "b12169-3ed7284f2",
+    "execution": "One 30B-A3B model on one RTX 5090 Laptop GPU with 24 GB VRAM, concurrency=1. No 8B inference server was started in this follow-up run.",
+    "context_tokens": 8192,
+    "max_output_tokens": 4096,
+    "temperature": 0.3,
+    "top_k": 40,
+    "top_p": 0.95,
+    "min_p": 0.05,
+    "reasoning_format": "none",
+    "structured_output": true,
+    "component_structured_output": false,
+    "pattern_shortcut": true,
+    "unstructured_fallback": false,
+    "rag": false,
+    "request_retries": 2,
+    "request_timeout_seconds": 600,
+    "concurrency": 1
+  },
+  "models": {
+    "large": {
+      "status": "benchmark_completed",
+      "repository": "Qwen/Qwen3-30B-A3B-GGUF",
+      "revision": "e4d4bafdfb96a411a163846265362aceb0b9c63a",
+      "file": "Qwen3-30B-A3B-Q4_K_M.gguf",
+      "alias": "large",
+      "quantization": "Q4_K_M",
+      "parameters": 30532122624,
+      "file_bytes": 18556685824,
+      "file_sha256": "0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5"
+    },
+    "small_baseline": {
+      "status": "previously_benchmarked",
+      "manifest": "evaluation/controlled-local-qwen3.json",
+      "repository": "Qwen/Qwen3-8B-GGUF",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "alias": "small",
+      "quantization": "Q4_K_M",
+      "parameters": 8190735360,
+      "file_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+      "pipeline_sha256": "cfc09986bc008ec74628ff54efeff4a1bcc319611601c52962f8e0fcd77c844e"
+    }
+  },
+  "results": {
+    "direct": {
+      "cases": 72,
+      "executable": {"successes": 1, "rate": 0.013888888888888888},
+      "semantic": {"successes": 1, "rate": 0.013888888888888888},
+      "behavior": {"successes": 1, "rate": 0.013888888888888888},
+      "repair_rate": 0.0,
+      "average_duration_seconds": 16.707,
+      "infrastructure_error_cases": 0
+    },
+    "typed_no_repair": {
+      "cases": 72,
+      "executable": {"successes": 56, "rate": 0.7777777777777778},
+      "semantic": {"successes": 51, "rate": 0.7083333333333334},
+      "behavior": {"successes": 50, "rate": 0.6944444444444444},
+      "repair_rate": 0.0,
+      "average_duration_seconds": 14.199,
+      "infrastructure_error_cases": 0
+    },
+    "full": {
+      "cases": 72,
+      "executable": {"successes": 71, "rate": 0.9861111111111112},
+      "semantic": {"successes": 65, "rate": 0.9027777777777778},
+      "behavior": {"successes": 64, "rate": 0.8888888888888888},
+      "graph": {"successes": 71, "rate": 0.9861111111111112},
+      "repair_cases": 15,
+      "repair_rate": 0.20833333333333334,
+      "average_duration_seconds": 16.532,
+      "infrastructure_error_cases": 0,
+      "targets_90_85_85": "All three target point estimates pass: 71/72 executable, 65/72 semantic and 64/72 behavior. Graph is 71/72; the separate graph=1.0 reference target is not met."
+    }
+  },
+  "statistical_analysis": {
+    "path": "evaluation/controlled-local-qwen3-30b-paired-analysis.json",
+    "sha256": "93e4efb7bca27013e15d1a72533a8c8876f6dbd697165eee1c4d9cdd09cdb5f8",
+    "method": "Two-sided exact McNemar, prompt-cluster bootstrap 95% CI over 10000 samples and Holm correction within each metric family. Repeated runs of one prompt remain dependent observations.",
+    "typed_no_repair_to_full": {
+      "executable": {"difference_percentage_points": 20.833333333333336, "ci95_percentage_points": [9.722222222222222, 33.33333333333333], "treatment_only": 15, "baseline_only": 0, "mcnemar_holm_pvalue": 0.00006103515625},
+      "semantic": {"difference_percentage_points": 19.444444444444443, "ci95_percentage_points": [8.333333333333333, 31.944444444444443], "treatment_only": 14, "baseline_only": 0, "mcnemar_holm_pvalue": 0.0001220703125},
+      "behavior": {"difference_percentage_points": 19.444444444444443, "ci95_percentage_points": [8.333333333333333, 31.944444444444443], "treatment_only": 14, "baseline_only": 0, "mcnemar_holm_pvalue": 0.0001220703125}
+    },
+    "direct_to_full": {
+      "executable": {"difference_percentage_points": 97.22222222222223, "ci95_percentage_points": [93.05555555555556, 100.0], "mcnemar_holm_pvalue": 5.082197683525802e-21},
+      "semantic": {"difference_percentage_points": 88.88888888888889, "ci95_percentage_points": [76.38888888888888, 98.61111111111111], "mcnemar_holm_pvalue": 3.2526065174565133e-19},
+      "behavior": {"difference_percentage_points": 87.5, "ci95_percentage_points": [75.0, 97.22222222222222], "mcnemar_holm_pvalue": 6.505213034913027e-19}
+    }
+  },
+  "paired_model_comparison": {
+    "path": "evaluation/controlled-local-qwen3-model-comparison.json",
+    "sha256": "a357e001ace8d791871e194655a9da26aadc1946bab9ab500b27104db8282a85",
+    "baseline": "Qwen3-8B-Q4_K_M",
+    "treatment": "Qwen3-30B-A3B-Q4_K_M",
+    "compatibility": "Identical corpus, pipeline, protocol, LLM settings and prompt/run/inference_seed pairs; same runtime image and GPU.",
+    "full_30b_minus_8b": {
+      "executable": {"difference_percentage_points": 4.166666666666667, "ci95_percentage_points": [-2.7777777777777777, 12.5], "treatment_only": 4, "baseline_only": 1, "mcnemar_exact_pvalue": 0.375, "mcnemar_holm_pvalue": 1.0},
+      "semantic": {"difference_percentage_points": 2.777777777777778, "ci95_percentage_points": [-2.7777777777777777, 9.722222222222222], "treatment_only": 3, "baseline_only": 1, "mcnemar_exact_pvalue": 0.625, "mcnemar_holm_pvalue": 1.0},
+      "behavior": {"difference_percentage_points": 4.166666666666667, "ci95_percentage_points": [-1.3888888888888888, 11.11111111111111], "treatment_only": 5, "baseline_only": 2, "mcnemar_exact_pvalue": 0.453125, "mcnemar_holm_pvalue": 1.0}
+    },
+    "conclusion": "The 30B full pipeline passes all 90/85/85 point-estimate targets, but no full-pipeline metric shows a statistically significant difference from 8B after Holm correction. This is a comparison of two checkpoints, not an isolated parameter-count scaling experiment: 8B is dense and 30B-A3B is MoE.",
+    "latency_descriptive": {
+      "full_average_seconds_8b": 30.988,
+      "full_average_seconds_30b": 16.532,
+      "ratio_8b_to_30b": 1.874,
+      "note": "Descriptive per-case durations at concurrency=1 on the same GPU/runtime; no latency significance test was performed."
+    }
+  },
+  "failure_analysis": {
+    "full_non_executable_cases": 1,
+    "full_behavior_failures": 8,
+    "full_behavior_failure_groups": {
+      "managed_forest_logistic_instead_of_renewable_resource": 3,
+      "relaxation_cycle_missing_van_der_pol_pattern_or_expected_relaxation_behavior": 3,
+      "parcel_negative_buffer_final_minus_2": 1,
+      "short_infusion_duplicate_component_identifier": 1
+    },
+    "direct_truncation_or_empty_after_length_cases": 14,
+    "note": "These are descriptive failure groups, not new tuning targets for the already analyzed corpus. The single full-pipeline non-executable case has duplicate Clearance_flow_coefficient and Clearance_flow identifiers after repair. No infrastructure errors were observed."
+  },
+  "artifacts": {
+    "raw_report": "generation_core/out/local-qwen3-30b-a3b-q4km-ablation.json",
+    "raw_report_sha256": "69ff207ddf01638e1a7d33866a1b6f34c36f4be8fbc0cd1d05766c8b580007c9",
+    "case_artifacts": "generation_core/out/local-qwen3-30b-a3b-q4km-artifacts",
+    "annotation_export": "generation_core/out/local-qwen3-30b-a3b-q4km-annotations",
+    "runtime_props": "generation_core/out/llama-large-props.json",
+    "gpu_monitor": "generation_core/out/gpu-large.csv",
+    "model_checksum": "generation_core/out/model-large.sha256",
+    "smoke_report": "generation_core/out/smoke-large.json",
+    "supervisor_log": "generation_core/out/supervisor-large.log",
+    "out_directories_are_gitignored": true
+  },
+  "integrity": {
+    "case_and_prompt_files_present": 216,
+    "executable_model_and_simulation_files_present": 128,
+    "expected_inference_seed_mismatches": 0,
+    "local_and_remote_report_sha256_match": true,
+    "infrastructure_error_cases": 0
+  },
+  "gpu_observations": {
+    "samples": 683,
+    "first_sample": "2026-11-08T07:58:25.469+03:00",
+    "last_sample": "2026-11-08T08:55:23.261+03:00",
+    "peak_memory_mib": 19216,
+    "peak_temperature_celsius": 75,
+    "peak_power_watts": 170.87,
+    "after_evaluation_shutdown": {
+      "memory_used_mib": 487,
+      "memory_free_mib": 23651,
+      "active_cuda_processes": 0,
+      "evaluation_server": "stopped_and_removed",
+      "benchmark_container": "exited_zero_and_removed",
+      "gpu_monitor": "stopped"
+    }
+  },
+  "expert_review": {
+    "required_independent_experts": 2,
+    "status": "pending_human_annotation",
+    "tasks_for_this_model": 216,
+    "model_artifacts_for_this_model": 128,
+    "scores": ["0", "1", "NA"],
+    "agreement": "Cohen's kappa and raw agreement before adjudication",
+    "self_annotation_is_not_independent": true,
+    "privacy": "Only the expert/ subdirectory may be shared; private/answer_key.json is withheld."
+  },
+  "limitations": [
+    "Automatic semantic and behavior oracles do not replace independent expert review.",
+    "The full-pipeline 8B/30B differences are not statistically significant after multiplicity correction; the point estimates must not be presented as proven model-size superiority.",
+    "Dense 8B and MoE 30B-A3B differ in architecture as well as total parameter count; this is not a controlled scaling-law experiment.",
+    "This frozen corpus has now been analyzed for two local checkpoints. Future generator changes require regression checks and a fresh unseen corpus.",
+    "The results do not establish universal robustness across arbitrary domains, prompts, runtimes or quantizations.",
+    "Production HTTPS and SMTP deployment were not performed."
+  ]
+}
